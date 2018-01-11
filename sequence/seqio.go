@@ -18,40 +18,40 @@ type ReadSeekCloser interface {
 
 type SequenceSet interface {
 	GetSequences() <-chan Sequence
-	GetNSequencesFrom(int,int) <-chan Sequence //starting from previously seen sequence id
+	GetNSequencesFrom(int, int) <-chan Sequence //starting from previously seen sequence id
 	GetSequencesByID([]int) <-chan Sequence
 	GetLength(int) int //gets the length of a (previously read) sequence
-	GetBases() int64 //all bases in this set (read so far)
+	GetBases() int64   //all bases in this set (read so far)
 	GetName(int) string
 	SetName(int, string)
 	SetIgnore(int, bool) //a sequence id that will be skipped on future requests
-	SetFrontTrim(int,int)
-	SetBackTrim(int,int)
+	SetFrontTrim(int, int)
+	SetBackTrim(int, int)
 	GetFrontTrim(int) int
 	GetBackTrim(int) int
 	Size() int
 	AddSequence(Sequence, string) //additional sequences to be kept in memory, these appear after the fasta on read
-	Write(io.Writer,bool)
+	Write(io.Writer, bool)
 }
 
 type fastaSequenceSet struct {
-	filename string
-	offsets []int64 //byte offset to start of each sequence, including the frontTrim
-	ignore []bool
-	frontTrim []int
-	backTrim []int
-	lengths []int
-	bases int64
-	names []string
-	minLen int
-	isFastq bool //whether quality scores are available or not
-	size int
-	extras []Sequence
+	filename   string
+	offsets    []int64 //byte offset to start of each sequence, including the frontTrim
+	ignore     []bool
+	frontTrim  []int
+	backTrim   []int
+	lengths    []int
+	bases      int64
+	names      []string
+	minLen     int
+	isFastq    bool //whether quality scores are available or not
+	size       int
+	extras     []Sequence
 	extraNames []string
 }
 
 func NewFastaSequenceSet(filename string, minLength int) SequenceSet {
-	f := fastaSequenceSet{filename:filename, offsets: make([]int64, 0, 500000), ignore: make([]bool, 0, 500000), frontTrim:make([]int, 0, 500000), backTrim:make([]int, 0, 500000), lengths: make([]int, 0, 500000), bases: 0, names: make([]string, 0, 500000), minLen:minLength, isFastq: false, extras:make([]Sequence, 0, 20), extraNames: make([]string,0,20)}
+	f := fastaSequenceSet{filename: filename, offsets: make([]int64, 0, 500000), ignore: make([]bool, 0, 500000), frontTrim: make([]int, 0, 500000), backTrim: make([]int, 0, 500000), lengths: make([]int, 0, 500000), bases: 0, names: make([]string, 0, 500000), minLen: minLength, isFastq: false, extras: make([]Sequence, 0, 20), extraNames: make([]string, 0, 20)}
 	return &f
 }
 
@@ -78,7 +78,7 @@ func (f *fastaSequenceSet) sendExtras(sentCount, maxSeqs, nextID int, seqOut cha
 }
 
 func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int) <-chan Sequence {
-	seqOut := make(chan Sequence,10)
+	seqOut := make(chan Sequence, 10)
 	go func() {
 		sentCount := 0
 		a := byte('A')
@@ -87,13 +87,13 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 		plus := byte('+')
 		var offset int64
 		//read any we've seen before, seeking through the file
-		buf := make([]byte, 1000000,1000000) //up to one mega-base
-		for ;nextID < len(f.ignore) && sentCount < maxSeqs; nextID++ {
+		buf := make([]byte, 1000000, 1000000) //up to one mega-base
+		for ; nextID < len(f.ignore) && sentCount < maxSeqs; nextID++ {
 			if f.ignore[nextID] {
 				if nextID == len(f.ignore)-1 {
 					offset = f.offsets[nextID]
 					if _, err := in.Seek(offset, io.SeekStart); err != nil {
-						log.Println(err,"during seek. Stopping sequence input here.")
+						log.Println(err, "during seek. Stopping sequence input here.")
 						break
 					}
 				}
@@ -101,25 +101,25 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 			}
 			offset = f.offsets[nextID]
 			if _, err := in.Seek(offset, io.SeekStart); err != nil {
-				log.Println(err,"during seek. Stopping sequence input here.")
+				log.Println(err, "during seek. Stopping sequence input here.")
 				break
 			}
 			if len(buf) <= f.lengths[nextID] {
-				buf = make([]byte, f.lengths[nextID]+10000,f.lengths[nextID]+10000)
+				buf = make([]byte, f.lengths[nextID]+10000, f.lengths[nextID]+10000)
 			}
-			if n, _ := io.ReadFull(in,buf[:f.lengths[nextID]]); n == f.lengths[nextID] {
+			if n, _ := io.ReadFull(in, buf[:f.lengths[nextID]]); n == f.lengths[nextID] {
 				//transform into 0-4 values. A=65, C=67, G=71, T=84
-				data := make([]byte, n,n)
+				data := make([]byte, n, n)
 				for i, b := range buf[:n] {
 					data[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
 				}
-				seq := byteSequence{data:data, id:nextID, name: &(f.names[nextID])}
+				seq := byteSequence{data: data, id: nextID, name: &(f.names[nextID])}
 				//TODO: quality for fastq?? Jump ahead by the back trim?
 				offset += int64(n)
 				sentCount++
 				seqOut <- &seq
 			} else {
-				log.Println("Unexpected read size",n,"not matching expected",f.lengths[nextID])
+				log.Println("Unexpected read size", n, "not matching expected", f.lengths[nextID])
 				break //hit the end?
 			}
 		}
@@ -156,21 +156,21 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 					for i, b := range buf {
 						buf[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
 					}
-					seq := byteSequence{data:buf[:len(buf)-1], id:nextID, name: &(f.names[len(f.names)-1])}
-					f.bases += int64(len(buf)-1)
+					seq := byteSequence{data: buf[:len(buf)-1], id: nextID, name: &(f.names[len(f.names)-1])}
+					f.bases += int64(len(buf) - 1)
 					nextID++
 					//if fastq, read error line
 					if f.isFastq {
-						offset += int64(len(buf)) //the sequence
+						offset += int64(len(buf))      //the sequence
 						buf, err = bin.ReadBytes('\n') //+ line
 						if err != nil || buf[0] != plus {
-							log.Fatal("Invalid fastq formant (on + line):",string(buf))
+							log.Fatal("Invalid fastq formant (on + line):", string(buf))
 						}
 						offset += int64(len(buf))
 						buf, _ = bin.ReadBytes('\n') //error line
 						if len(buf) == len(seq.data) {
 							for i, b := range buf {
-								buf[i] = b-33
+								buf[i] = b - 33
 							}
 							seq.quality = buf[:len(buf)-1]
 						}
@@ -182,9 +182,9 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 					offset += int64(len(buf)) //the sequence
 					buf, err = bin.ReadBytes('\n')
 					if err != nil || buf[0] != plus {
-						log.Fatal("Invalid fastq formant (on + line):",string(buf))
+						log.Fatal("Invalid fastq formant (on + line):", string(buf))
 					}
-					offset += int64(len(buf)) //the + line
+					offset += int64(len(buf))    //the + line
 					buf, _ = bin.ReadBytes('\n') //error line
 				}
 			} else if buf[0] == fastqComment {
@@ -221,17 +221,17 @@ func (f *fastaSequenceSet) GetNSequencesFrom(index int, n int) <-chan Sequence {
 		return out
 	}
 	//test for gzip by extension (.gz)
-	if strings.HasSuffix(f.filename,".gz") {
+	if strings.HasSuffix(f.filename, ".gz") {
 		inFile = util.NewSeekableGZipReader(inFile)
 	}
 	return f.readFasta(inFile, index, n)
 }
 
 func (f *fastaSequenceSet) GetSequences() <-chan Sequence {
-	return f.GetNSequencesFrom(0,int(math.MaxInt32))
+	return f.GetNSequencesFrom(0, int(math.MaxInt32))
 }
 
-func(f *fastaSequenceSet) GetSequencesByID(ids []int) <-chan Sequence {
+func (f *fastaSequenceSet) GetSequencesByID(ids []int) <-chan Sequence {
 	oldIgnore := f.ignore
 	f.ignore = make([]bool, len(oldIgnore), len(oldIgnore))
 	for i := 0; i < len(f.ignore); i++ {
@@ -241,7 +241,7 @@ func(f *fastaSequenceSet) GetSequencesByID(ids []int) <-chan Sequence {
 		f.ignore[id] = false
 	}
 	finalReturn := make(chan Sequence, 20)
-	seqs := f.GetNSequencesFrom(0,int(math.MaxInt32))
+	seqs := f.GetNSequencesFrom(0, int(math.MaxInt32))
 	go func() {
 		sentCount := 0
 		for seq := range seqs {
@@ -322,23 +322,23 @@ func (f *fastaSequenceSet) Write(out io.Writer, fullNames bool) {
 	if f.isFastq {
 		for s := range seqs {
 			if fullNames {
-				io.WriteString(out, fmt.Sprintln("@",f.GetName(s.GetID()) ))
+				io.WriteString(out, fmt.Sprintln("@", f.GetName(s.GetID())))
 			} else {
-				io.WriteString(out,fmt.Sprintln("@",s.GetID()))
+				io.WriteString(out, fmt.Sprintln("@", s.GetID()))
 			}
-			io.WriteString(out,s.String())
+			io.WriteString(out, s.String())
 			//TODO: write quality line here
-			io.WriteString(out,"\n")
+			io.WriteString(out, "\n")
 		}
 	} else {
 		for s := range seqs {
 			if fullNames {
-				io.WriteString(out, fmt.Sprintln(">",f.GetName(s.GetID()) ))
+				io.WriteString(out, fmt.Sprintln(">", f.GetName(s.GetID())))
 			} else {
-				io.WriteString(out,fmt.Sprintln(">",s.GetID()))
+				io.WriteString(out, fmt.Sprintln(">", s.GetID()))
 			}
-			io.WriteString(out,s.String())
-			io.WriteString(out,"\n")
+			io.WriteString(out, s.String())
+			io.WriteString(out, "\n")
 		}
 	}
 }

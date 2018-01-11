@@ -9,7 +9,7 @@ type Sequence interface {
 	setID(int)
 	GetName() string
 	String() string
-	SubSequence(int,int) Sequence
+	SubSequence(int, int) Sequence
 	StitchSequence(Sequence, int, int) int
 	ReverseComplement() Sequence
 	Len() int
@@ -25,18 +25,18 @@ type Sequence interface {
 //byteSequence uses an internal mapping of N=0, A=1, B=2, C=3, T=4 storing
 //the sequence as a byte slice
 type byteSequence struct {
-	data []byte
+	data    []byte
 	quality []byte
-	id int
-	offset int //if a subsequence of a larger sequence
-	inset int
-	name *string
+	id      int
+	offset  int //if a subsequence of a larger sequence
+	inset   int
+	name    *string
 }
 
 //packedSequence stores 4 bases per byte, trading CPU overhead for memory efficiency
 type packedSequence struct {
-	data []byte
-	quality []byte
+	data     []byte
+	quality  []byte
 	finalLen int
 }
 
@@ -46,19 +46,19 @@ func NewByteSequence(id int, seq string, name string) Sequence {
 		b := byte(s)
 		data[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
 	}
-	s := byteSequence{data:data, quality:nil, id:id, offset:0, inset:0, name:&name}
+	s := byteSequence{data: data, quality: nil, id: id, offset: 0, inset: 0, name: &name}
 	return &s
 }
 
 func NewByteSequenceFromKmers(id int, kmers []uint16, k int) Sequence {
-	data := make([]byte, len(kmers) + k - 1, len(kmers)+k - 1)
+	data := make([]byte, len(kmers)+k-1, len(kmers)+k-1)
 	for i := 0; i < k-1; i++ {
-		data[i] = byte((kmers[0] >> (2*uint(k-i-1))) & 3)
+		data[i] = byte((kmers[0] >> (2 * uint(k-i-1))) & 3)
 	}
 	for i, kmer := range kmers {
 		data[i+k-1] = byte(kmer & 3)
 	}
-	s := byteSequence{data:data, quality:nil, id:id, offset:0, inset:0}
+	s := byteSequence{data: data, quality: nil, id: id, offset: 0, inset: 0}
 	return &s
 }
 
@@ -81,7 +81,7 @@ func (s *byteSequence) StitchSequence(rhs Sequence, minOverlap, maxOverlap int) 
 				c++
 			}
 		}
-		r := float64(c)/float64(i)
+		r := float64(c) / float64(i)
 		if r > count {
 			count = r
 			overlap = i
@@ -105,7 +105,7 @@ func (s *byteSequence) ReverseComplement() Sequence {
 		bs[len(bs)-1-i] = b ^ 3
 	}
 	//TODO: reverse the quality
-	rc := byteSequence{data:bs, quality:nil, id:s.id, offset:s.inset, inset:s.offset,name:s.name}
+	rc := byteSequence{data: bs, quality: nil, id: s.id, offset: s.inset, inset: s.offset, name: s.name}
 	return &rc
 }
 
@@ -125,7 +125,7 @@ func (s *byteSequence) GetName() string {
 }
 
 func (s *byteSequence) String() string {
-	buf := make([]byte, len(s.data),len(s.data))
+	buf := make([]byte, len(s.data), len(s.data))
 	for i, b := range s.data {
 		if b == 0 {
 			buf[i] = byte('A')
@@ -144,7 +144,7 @@ func (s *byteSequence) SubSequence(start, end int) Sequence {
 	if end > len(s.data) {
 		end = len(s.data)
 	}
-	ss := byteSequence{data:s.data[start:end], id:s.id, offset: s.offset+start, inset: s.inset+len(s.data)-end, name:s.name}
+	ss := byteSequence{data: s.data[start:end], id: s.id, offset: s.offset + start, inset: s.inset + len(s.data) - end, name: s.name}
 	if s.quality != nil {
 		ss.quality = s.quality[start:end]
 	}
@@ -173,10 +173,9 @@ func (s *byteSequence) GetInset() int {
 	return s.inset
 }
 
-
 func (s *byteSequence) Kmers(k int) []uint64 {
-	length := len(s.data)-k+1
-	kmers := make([]uint64, length,length)
+	length := len(s.data) - k + 1
+	kmers := make([]uint64, length, length)
 
 	var mask uint64
 	var v uint64
@@ -195,8 +194,8 @@ func (s *byteSequence) Kmers(k int) []uint64 {
 
 //ShortKmers produces a list of kmers (up to 8-mers in length), collapsing homopolymers
 func (s *byteSequence) ShortKmers(k int) []uint16 {
-	length := len(s.data)-k+1
-	kmers := make([]uint16, length,length)
+	length := len(s.data) - k + 1
+	kmers := make([]uint16, length, length)
 
 	var mask uint16
 	var v uint16
@@ -230,13 +229,17 @@ func (s *byteSequence) getBytes() []byte {
 
 func KmerString(value int, k int) string {
 	bs := make([]byte, k, k)
-	for i := k-1; i >= 0; i-- {
+	for i := k - 1; i >= 0; i-- {
 		base := value & 3
 		switch base {
-			case 0: bs[i] = 'A'
-			case 1: bs[i] = 'C'
-			case 2: bs[i] = 'G'
-			case 3: bs[i] = 'T'
+		case 0:
+			bs[i] = 'A'
+		case 1:
+			bs[i] = 'C'
+		case 2:
+			bs[i] = 'G'
+		case 3:
+			bs[i] = 'T'
 		}
 		value = value >> 2
 	}

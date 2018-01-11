@@ -6,31 +6,31 @@ import (
 )
 
 const (
-	Bit uint64 = 1
+	Bit     uint64 = 1
 	AllBits uint64 = 0xFFFFFFFFFFFFFFFF
 )
 
 type IntSet struct {
-	vs []uint64
+	vs    []uint64
 	start uint
-	end uint
+	end   uint
 	count uint //size is no greater than this
 }
 
 func NewIntSet() *IntSet {
-	set := IntSet{make([]uint64, 0, 50), 1, 0, 0 }
+	set := IntSet{make([]uint64, 0, 50), 1, 0, 0}
 	return &set
 }
 
 func NewIntSetFromInts(values []int) *IntSet {
-	set := IntSet{make([]uint64, 0, 50), 1, 0, 0 }
+	set := IntSet{make([]uint64, 0, 50), 1, 0, 0}
 	s := &set
 	s.AddInts(values)
 	return s
 }
 
 func NewIntSetFromUInts(values []uint) *IntSet {
-	set := IntSet{make([]uint64, 0, 50), 1, 0, 0 }
+	set := IntSet{make([]uint64, 0, 50), 1, 0, 0}
 	s := &set
 	for _, v := range values {
 		s.Add(v)
@@ -93,14 +93,14 @@ func (set *IntSet) Remove(x uint) {
 }
 
 func (set *IntSet) reduceStartEnd() {
-	for ; set.start <= set.end && set.vs[set.start] == 0; {
+	for set.start <= set.end && set.vs[set.start] == 0 {
 		set.start++
 	}
-	for ; set.end >= set.start && set.vs[set.end] == 0; {
+	for set.end >= set.start && set.vs[set.end] == 0 {
 		set.end--
 	}
 	if set.start > set.end {
-		set.start = uint(len(set.vs))+1
+		set.start = uint(len(set.vs)) + 1
 		set.end = 0
 	}
 }
@@ -115,7 +115,7 @@ func (set *IntSet) Clear() {
 		set.start++
 	}
 	set.end = 0
-	set.start = uint(len(set.vs))+1
+	set.start = uint(len(set.vs)) + 1
 	set.count = 0
 }
 
@@ -137,20 +137,20 @@ func (set *IntSet) CountIntersection(other *IntSet) uint {
 		end = other.end
 	}
 	count := 0
-	for ;start <= end; start++ {
+	for ; start <= end; start++ {
 		count += bits.OnesCount64(set.vs[start] & other.vs[start])
 	}
 	return uint(count)
 }
 
 func (set *IntSet) Intersect(other *IntSet) {
-	for ;set.start < other.start && set.start <= set.end; set.start++ {
+	for ; set.start < other.start && set.start <= set.end; set.start++ {
 		set.vs[set.start] = 0
 	}
-	for ;set.end > other.end && set.end >= set.start; set.end-- {
+	for ; set.end > other.end && set.end >= set.start; set.end-- {
 		set.vs[set.end] = 0
 	}
-	for i := set.start ;i <= set.end; i++ {
+	for i := set.start; i <= set.end; i++ {
 		set.vs[i] &= other.vs[i]
 	}
 	set.reduceStartEnd()
@@ -194,7 +194,7 @@ func GetSharedIDs(sets []*IntSet, minCount int) []uint {
 	start := uint(len(sets[0].vs))
 	end := uint(0)
 	n := len(sets)
-	lens := make([]uint,n,n)
+	lens := make([]uint, n, n)
 	var ids []uint
 	for i := 0; i < n; i++ {
 		lens[i] = uint(len(sets[i].vs))
@@ -205,9 +205,9 @@ func GetSharedIDs(sets []*IntSet, minCount int) []uint {
 			end = sets[i].end
 		}
 	}
-	maxZeroes := n-minCount
+	maxZeroes := n - minCount
 	for i := start; i <= end; i++ {
-		var v uint64 //union
+		var v uint64  //union
 		var v2 uint64 //all bits that appear 2+ times
 		var v3 uint64 // "" 3+ times
 		var v4 uint64 // "" 4+ times
@@ -237,24 +237,24 @@ func GetSharedIDs(sets []*IntSet, minCount int) []uint {
 			v = v2
 		}
 		//TODO: report bits directly from the appropriate pseudo-union?
-		if count <= maxZeroes && v != 0{ //enough non-zero longs
+		if count <= maxZeroes && v != 0 { //enough non-zero longs
 			//we now have the union of the sets. Check each ID
 			bit := Bit
 			zs := uint(bits.TrailingZeros64(v))
 			bit <<= zs
 			v >>= zs
-			for j := zs;/*uint(0);*/ j < 64 && v != 0; j++ {
-				if(Bit & v) != 0 { //a member of the union
+			for j := zs; /*uint(0);*/ j < 64 && v != 0; j++ {
+				if (Bit & v) != 0 { //a member of the union
 					count = 0
 					//find which sets contained this one (make sure we ignore shortened vs slices)
 					for k := 0; k < n; k++ {
-						if lens[k] > i && (sets[k].vs[i] & bit) != 0 {
+						if lens[k] > i && (sets[k].vs[i]&bit) != 0 {
 							count++
 							if count >= minCount { //this bit has appeared in enough sets
 								if ids == nil {
 									ids = make([]uint, 0, 20)
 								}
-								ids = append(ids, uint(i*64 + j))
+								ids = append(ids, uint(i*64+j))
 								break
 							}
 						} else if k-count > maxZeroes {
@@ -287,7 +287,7 @@ func (set *IntSet) GetNextID(x uint) (bool, uint) {
 			subIndex = 0
 		}
 	}
-	for; index <= set.end && set.vs[index] == 0; {
+	for index <= set.end && set.vs[index] == 0 {
 		index++
 	}
 	if index > set.end {
@@ -295,13 +295,13 @@ func (set *IntSet) GetNextID(x uint) (bool, uint) {
 	}
 	v := set.vs[index] >> subIndex
 	zs := uint(bits.TrailingZeros64(v))
-	return true, index*64+subIndex+zs
+	return true, index*64 + subIndex + zs
 }
 
 func (set *IntSet) AsInts() []int {
 	//consider inlining the loop to speed this up
-	ids := make([]int,0,set.count)
-	for ok,id := set.GetFirstID(); ok; ok,id = set.GetNextID(id) {
+	ids := make([]int, 0, set.count)
+	for ok, id := set.GetFirstID(); ok; ok, id = set.GetNextID(id) {
 		ids = append(ids, int(id))
 	}
 	return ids
@@ -325,13 +325,13 @@ func (set *IntSet) Size() uint {
 func (set *IntSet) String() string {
 	s := "{"
 	first := true
-	for ok,v := set.GetFirstID(); ok; ok,v = set.GetNextID(v) {
+	for ok, v := set.GetFirstID(); ok; ok, v = set.GetNextID(v) {
 		if first {
 			first = false
-			s = fmt.Sprint(s,v)
+			s = fmt.Sprint(s, v)
 		} else {
-			s = fmt.Sprint(s,",",v)
+			s = fmt.Sprint(s, ",", v)
 		}
 	}
-	return s+"}"
+	return s + "}"
 }

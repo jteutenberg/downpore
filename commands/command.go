@@ -9,7 +9,7 @@ import (
 type Command interface {
 	GetName() string
 	//GetArgs returns this commands arguments as a map of switch->default value and a map of descriptions
-	GetArgs() (map[string]string,map[string]string,map[string]string)
+	GetArgs() (map[string]string, map[string]string, map[string]string)
 	//Run executes the command using the given map of switch->argument value
 	Run(map[string]string)
 }
@@ -31,7 +31,7 @@ func MakeArgs(names []string, defaults []string, descriptions []string) (map[str
 			alias[names[i]] = string(names[i][0:1])
 		} else {
 			//find the minimal length to disambiguate ALL args with this first letter
-			j := i+1
+			j := i + 1
 			minLen := 1
 			for j < len(names) && names[j][0] == names[i][0] {
 				sameCount := 1
@@ -39,7 +39,7 @@ func MakeArgs(names []string, defaults []string, descriptions []string) (map[str
 					sameCount++
 				}
 				if sameCount >= minLen {
-					minLen = sameCount+1
+					minLen = sameCount + 1
 				}
 				j++
 			}
@@ -49,24 +49,24 @@ func MakeArgs(names []string, defaults []string, descriptions []string) (map[str
 					alias[n] = string(n[:minLen])
 				}
 			}
-			i = j-1
+			i = j - 1
 		}
 	}
 	return args, alias, desc
 }
 
 func ParseInt(arg string) int {
-	if s,err := strconv.ParseInt(arg,10,32); err == nil {
+	if s, err := strconv.ParseInt(arg, 10, 32); err == nil {
 		return int(s)
 	}
-	log.Fatal("Invalid integer argument value:",arg)
+	log.Fatal("Invalid integer argument value:", arg)
 	return 0
 }
 func ParseFloat(arg string) float64 {
-	if s,err := strconv.ParseFloat(arg,64); err == nil {
+	if s, err := strconv.ParseFloat(arg, 64); err == nil {
 		return s
 	}
-	log.Fatal("Invalid float argument value:",arg)
+	log.Fatal("Invalid float argument value:", arg)
 	return 0
 }
 func ParseBool(arg string) bool {

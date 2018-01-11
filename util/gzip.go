@@ -10,12 +10,12 @@ import (
 type SeekableGZipReader struct {
 	reader *gzip.Reader
 	offset int64
-	buf []byte
+	buf    []byte
 }
 
 func NewSeekableGZipReader(r io.Reader) *SeekableGZipReader {
 	gr, _ := gzip.NewReader(r)
-	return &SeekableGZipReader{reader:gr,offset:0,buf:make([]byte,65536,65536)}
+	return &SeekableGZipReader{reader: gr, offset: 0, buf: make([]byte, 65536, 65536)}
 }
 
 func (s *SeekableGZipReader) Close() error {
@@ -24,7 +24,7 @@ func (s *SeekableGZipReader) Close() error {
 func (s *SeekableGZipReader) Multistream(ok bool) {
 	s.reader.Multistream(ok)
 }
-func (s *SeekableGZipReader) Read(p []byte) (int,error) {
+func (s *SeekableGZipReader) Read(p []byte) (int, error) {
 	n, err := s.reader.Read(p)
 	s.offset += int64(n)
 	return n, err
@@ -35,7 +35,7 @@ func (s *SeekableGZipReader) Reset(r io.Reader) error {
 	return s.reader.Reset(r)
 }
 
-func (s *SeekableGZipReader) Seek(offset int64, whence int) (int64,error) {
+func (s *SeekableGZipReader) Seek(offset int64, whence int) (int64, error) {
 	if whence == io.SeekStart {
 		offset -= s.offset //becomes relative to current position
 	}

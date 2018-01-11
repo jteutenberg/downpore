@@ -1,21 +1,21 @@
 package seeds
 
 import (
+	"fmt"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
 	"math"
 	"sync"
-	"fmt"
 )
 
 //SeedIndex is a set of reads in gapped-seed format ready for querying
 type SeedIndex struct {
-	seedSize uint
-	seeds []bool
-	sequences []*SeedSequence //list of all sequences
-	sequenceSets []*util.IntSet//list of seed -> set of sequences (indices)
-	size uint
-	lock *sync.Mutex
+	seedSize     uint
+	seeds        []bool
+	sequences    []*SeedSequence //list of all sequences
+	sequenceSets []*util.IntSet  //list of seed -> set of sequences (indices)
+	size         uint
+	lock         *sync.Mutex
 }
 
 func NewSeedIndex(k uint) *SeedIndex {
@@ -24,12 +24,12 @@ func NewSeedIndex(k uint) *SeedIndex {
 		size *= 4
 	}
 	var lock sync.Mutex
-	sg := SeedIndex{seeds:make([]bool, size, size), seedSize: k, sequences: make([]*SeedSequence, 0, 100000), sequenceSets:make([]*util.IntSet, size, size), size:0, lock: &lock}
+	sg := SeedIndex{seeds: make([]bool, size, size), seedSize: k, sequences: make([]*SeedSequence, 0, 100000), sequenceSets: make([]*util.IntSet, size, size), size: 0, lock: &lock}
 	return &sg
 }
 
-//NewSeedSequence re-uses any seeds in the index, adding additional seeds as required to 
-//reach at least minSeeds for the sequence. Note that while seeds are added to the index, the 
+//NewSeedSequence re-uses any seeds in the index, adding additional seeds as required to
+//reach at least minSeeds for the sequence. Note that while seeds are added to the index, the
 //resulting sequence itself is not added.
 func (g *SeedIndex) NewSeedSequence(seq sequence.Sequence, minSeeds int, ranks []float64) *SeedSequence {
 	//first-pass, get the sequence as kmers
@@ -43,7 +43,7 @@ func (g *SeedIndex) NewSeedSequence(seq sequence.Sequence, minSeeds int, ranks [
 			count++
 			segments = append(segments, i-prev)
 			segments = append(segments, int(seed))
-			prev = i+int(g.seedSize)
+			prev = i + int(g.seedSize)
 		}
 	}
 	segments = append(segments, len(kmers)-prev+int(g.seedSize)-1) //number of bases remaining
@@ -72,7 +72,7 @@ func (g *SeedIndex) NewSeedSequence(seq sequence.Sequence, minSeeds int, ranks [
 					value := ranks[seed]
 					if value < bestValue {
 						bestValue = value
-						bestIndex = earliest+j
+						bestIndex = earliest + j
 					}
 				}
 				//step past the one we chose (the best)
@@ -112,13 +112,13 @@ func (g *SeedIndex) NewSeedSequence(seq sequence.Sequence, minSeeds int, ranks [
 			if g.seeds[seed] {
 				segments = append(segments, i-prev)
 				segments = append(segments, int(seed))
-				prev = i+int(g.seedSize)
+				prev = i + int(g.seedSize)
 			}
 		}
 		segments = append(segments, len(kmers)-prev+int(g.seedSize))
 	}
 	name := seq.GetName()
-	seedSeq := SeedSequence{segments:segments, length:seq.Len(), id:seq.GetID(), name:&name,offset: seq.GetOffset(), inset: seq.GetInset(), rc:false}
+	seedSeq := SeedSequence{segments: segments, length: seq.Len(), id: seq.GetID(), name: &name, offset: seq.GetOffset(), inset: seq.GetInset(), rc: false}
 	return &seedSeq
 }
 
@@ -136,12 +136,12 @@ func (g *SeedIndex) NewAllSeedSequence(seq sequence.Sequence) *SeedSequence {
 		}
 		segments = append(segments, i-prev)
 		segments = append(segments, int(seed))
-		prev = i+int(g.seedSize)
+		prev = i + int(g.seedSize)
 	}
 	g.lock.Unlock()
 	segments = append(segments, 0)
 	name := seq.GetName()
-	seedSeq := SeedSequence{segments:segments, length:seq.Len(), id:seq.GetID(), name: &name, offset: seq.GetOffset(), inset: seq.GetInset(), rc:false}
+	seedSeq := SeedSequence{segments: segments, length: seq.Len(), id: seq.GetID(), name: &name, offset: seq.GetOffset(), inset: seq.GetInset(), rc: false}
 	return &seedSeq
 }
 
@@ -201,7 +201,7 @@ func (g *SeedIndex) Destroy() {
 func (g *SeedIndex) PrintSeeds() {
 	for i, seqs := range g.sequenceSets {
 		if seqs != nil {
-			fmt.Println("Seed",i,"in",seqs.CountMembers())
+			fmt.Println("Seed", i, "in", seqs.CountMembers())
 		}
 	}
 }
@@ -236,11 +236,10 @@ func AddSequenceWorker(input <-chan sequence.Sequence, index *SeedIndex, output 
 	done <- true
 }
 
-//AddSeedsWorker processes all sequences, adding seeds to the provided index 
+//AddSeedsWorker processes all sequences, adding seeds to the provided index
 func AddSeedsWorker(input <-chan sequence.Sequence, index *SeedIndex, numSeeds int, kmerValues []float64, done chan<- bool) {
 	for seq := range input {
 		index.NewSeedSequence(seq, numSeeds, kmerValues)
 	}
 	done <- true
 }
-
