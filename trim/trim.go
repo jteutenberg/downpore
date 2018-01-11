@@ -41,6 +41,7 @@ type sequenceSplit struct {
 	bStart int
 }
 
+//NewTrimmer creates a new Trimmer object that will search for and trim the given adapters.
 func NewTrimmer(frontAdapters, backAdapters []sequence.Sequence, k int) *Trimmer {
 	var lock sync.Mutex
 	t := Trimmer{originalFront: frontAdapters, originalBack: backAdapters, frontAdapters: make([]*seeds.SeedSequence, 0, len(frontAdapters)), backAdapters: make([]*seeds.SeedSequence, 0, len(backAdapters)), frontAdapterSets: make([]*util.IntSet, 0, len(frontAdapters)), backAdapterSets: make([]*util.IntSet, 0, len(backAdapters)), index: nil, k: k, frontCounts: nil, backCounts: nil, noCount: 0, lock: &lock, verbosity: 1}
@@ -92,10 +93,12 @@ func LoadTrimmer(frontAdapters, backAdapters string, k int) *Trimmer {
 	return NewTrimmer(fronts, backs, k)
 }
 
+//SetVerbosity alters the level of logging output. 0=no output, 1=default, 2=additional output.
 func (t *Trimmer) SetVerbosity(level int) {
 	t.verbosity = level
 }
 
+//SetTrimParams updates the parameters to be used by any following calls to Trim.
 func (t *Trimmer) SetTrimParams(endThreshold, midThreshold, absThreshold, extraEdgeTrim, extraMidTrim int, keepSplits bool, tagAdapters bool) {
 	t.endThreshold = endThreshold
 	t.midThreshold = midThreshold
@@ -107,7 +110,7 @@ func (t *Trimmer) SetTrimParams(endThreshold, midThreshold, absThreshold, extraE
 }
 
 //Trim searches all sequences for adapters and updates the SequenceSet's offsets accordingly
-//Any reads that are split will be disabled in the sequence set and replaced with a new pair
+//Any reads that are split will be disabled in the sequence set and replaced with a new pair (or discarded, depending on current parameters)
 func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	//read in all the sequences
 	ss := seqs.GetSequences()
@@ -208,6 +211,7 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	}
 }
 
+//PrintStats outputs to stderr all adapters present (reduced after DetermineAdapters is called) and the percentage of reads containing them (modified after a call to Trim)
 func (t *Trimmer) PrintStats(seqs sequence.SequenceSet) {
 	for i, count := range t.frontCounts {
 		log.Println("Front adapter:", t.originalFront[i].GetName(), "\t", (count*100)/seqs.Size(), "%")
