@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 )
 
 type ReadSeekCloser interface {
@@ -48,10 +49,11 @@ type fastaSequenceSet struct {
 	size       int
 	extras     []Sequence
 	extraNames []string
+	numWorkers int
 }
 
-func NewFastaSequenceSet(filename string, minLength int) SequenceSet {
-	f := fastaSequenceSet{filename: filename, offsets: make([]int64, 0, 500000), ignore: make([]bool, 0, 500000), frontTrim: make([]int, 0, 500000), backTrim: make([]int, 0, 500000), lengths: make([]int, 0, 500000), bases: 0, names: make([]string, 0, 500000), minLen: minLength, isFastq: false, extras: make([]Sequence, 0, 20), extraNames: make([]string, 0, 20)}
+func NewFastaSequenceSet(filename string, minLength int, numWorkers int) SequenceSet {
+	f := fastaSequenceSet{filename: filename, offsets: make([]int64, 0, 500000), ignore: make([]bool, 0, 500000), frontTrim: make([]int, 0, 500000), backTrim: make([]int, 0, 500000), lengths: make([]int, 0, 500000), bases: 0, names: make([]string, 0, 500000), minLen: minLength, isFastq: false, extras: make([]Sequence, 0, 20), extraNames: make([]string, 0, 20), numWorkers: numWorkers}
 	return &f
 }
 
@@ -114,8 +116,26 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 					data[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
 				}
 				seq := byteSequence{data: data, id: nextID, name: &(f.names[nextID])}
-				//TODO: quality for fastq?? Jump ahead by the back trim?
 				offset += int64(n)
+				if f.isFastq { //get corresponding quality data
+					quality := make([]byte, n, n)
+					//skip ahead by back trim + 3 (2 endlines and a "+") + front trim
+					offset += int64(f.backTrim[nextID] + f.frontTrim[nextID] + 3)
+					if _, err := in.Seek(offset, io.SeekStart); err != nil {
+						log.Println(err, "during seek to quality values. Stopping sequence input here.")
+						break
+					}
+					if m, _ := io.ReadFull(in, quality); m == n {
+						for i, b := range quality {
+							quality[i] = b - 33
+						}
+						seq.quality = quality
+						offset += int64(m)
+					} else {
+						log.Println("Unexpected quality line size", m, "not matching expected", f.lengths[nextID])
+						break
+					}
+				}
 				sentCount++
 				seqOut <- &seq
 			} else {
@@ -164,7 +184,7 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 						offset += int64(len(buf))      //the sequence
 						buf, err = bin.ReadBytes('\n') //+ line
 						if err != nil || buf[0] != plus {
-							log.Fatal("Invalid fastq formant (on + line):", string(buf))
+							log.Fatal("Invalid fastq format (on + line):", string(buf))
 						}
 						offset += int64(len(buf))
 						buf, _ = bin.ReadBytes('\n') //error line
@@ -241,7 +261,7 @@ func (f *fastaSequenceSet) GetSequencesByID(ids []int) <-chan Sequence {
 		f.ignore[id] = false
 	}
 	finalReturn := make(chan Sequence, 20)
-	seqs := f.GetNSequencesFrom(0, int(math.MaxInt32))
+	seqs := f.GetNSequencesFrom(0, int(math.MaxInt32)) //len(ids))
 	go func() {
 		sentCount := 0
 		for seq := range seqs {
@@ -316,29 +336,57 @@ func (f *fastaSequenceSet) AddSequence(seq Sequence, name string) {
 	f.extraNames = append(f.extraNames, name)
 }
 
+func (f *fastaSequenceSet) fastaWriter(seqs <-chan Sequence, out *bufio.Writer, fullNames bool, lock *sync.Mutex, done chan<- bool) {
+	for s := range seqs {
+		var str string
+		if fullNames {
+			str = fmt.Sprintf(">%s\n%s\n", f.GetName(s.GetID()), s.String())
+		} else {
+			str = fmt.Sprintf(">%v\n%s\n", s.GetID(), s.String())
+		}
+		lock.Lock()
+		out.WriteString(str)
+		lock.Unlock()
+	}
+	done <- true
+}
+func (f *fastaSequenceSet) fastqWriter(seqs <-chan Sequence, out *bufio.Writer, fullNames bool, lock *sync.Mutex, done chan<- bool) {
+	for s := range seqs {
+		var str string
+		quality := s.Quality()
+		for i, b := range quality {
+			quality[i] = b + 33 //TODO: temporary change
+		}
+		if fullNames {
+			str = fmt.Sprintf("@%s\n%s\n+\n%s\n", f.GetName(s.GetID()), s.String(), string(quality))
+		} else {
+			str = fmt.Sprintf("@%v\n%s\n+\n%s\n", s.GetID(), s.String(), string(quality))
+		}
+		lock.Lock()
+		out.WriteString(str)
+		lock.Unlock()
+	}
+	done <- true
+}
+
 //Write re-reads the input sequences, writing out trimmed versions of non-ignored sequences
 func (f *fastaSequenceSet) Write(out io.Writer, fullNames bool) {
 	seqs := f.GetSequences()
+	done := make(chan bool, f.numWorkers)
+	var lock sync.Mutex
+
+	bout := bufio.NewWriter(out)
 	if f.isFastq {
-		for s := range seqs {
-			if fullNames {
-				io.WriteString(out, fmt.Sprintln("@", f.GetName(s.GetID())))
-			} else {
-				io.WriteString(out, fmt.Sprintln("@", s.GetID()))
-			}
-			io.WriteString(out, s.String())
-			//TODO: write quality line here
-			io.WriteString(out, "\n")
+		for i := 0; i < f.numWorkers; i++ {
+			go f.fastqWriter(seqs, bout, fullNames, &lock, done)
 		}
 	} else {
-		for s := range seqs {
-			if fullNames {
-				io.WriteString(out, fmt.Sprintln(">", f.GetName(s.GetID())))
-			} else {
-				io.WriteString(out, fmt.Sprintln(">", s.GetID()))
-			}
-			io.WriteString(out, s.String())
-			io.WriteString(out, "\n")
+		for i := 0; i < f.numWorkers; i++ {
+			go f.fastaWriter(seqs, bout, fullNames, &lock, done)
 		}
+	}
+
+	for i := 0; i < f.numWorkers; i++ {
+		<-done
 	}
 }

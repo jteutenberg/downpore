@@ -70,5 +70,5 @@ func ParseFloat(arg string) float64 {
 	return 0
 }
 func ParseBool(arg string) bool {
-	return arg == "1" || (len(arg) > 0 && (arg[0] == 'T' || arg[0] == 'T'))
+	return arg == "1" || (len(arg) > 0 && (arg[0] == 'T' || arg[0] == 't'))
 }

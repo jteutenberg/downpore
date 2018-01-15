@@ -25,9 +25,7 @@ type Trimmer struct {
 	backCounts  []int
 	noCount     int
 
-	endThreshold  int
 	midThreshold  int
-	absThreshold  int
 	extraEdgeTrim int
 	extraMidTrim  int
 	keepSplits    bool
@@ -46,7 +44,7 @@ func NewTrimmer(frontAdapters, backAdapters []sequence.Sequence, k int) *Trimmer
 	var lock sync.Mutex
 	t := Trimmer{originalFront: frontAdapters, originalBack: backAdapters, frontAdapters: make([]*seeds.SeedSequence, 0, len(frontAdapters)), backAdapters: make([]*seeds.SeedSequence, 0, len(backAdapters)), frontAdapterSets: make([]*util.IntSet, 0, len(frontAdapters)), backAdapterSets: make([]*util.IntSet, 0, len(backAdapters)), index: nil, k: k, frontCounts: nil, backCounts: nil, noCount: 0, lock: &lock, verbosity: 1}
 	(&t).setupIndex()
-	t.SetTrimParams(75, 75, 25, 5, 50, false, true)
+	t.SetTrimParams(85, 5, 50, false, true)
 	return &t
 }
 
@@ -80,12 +78,12 @@ func (t *Trimmer) setupIndex() {
 func LoadTrimmer(frontAdapters, backAdapters string, k int) *Trimmer {
 	fronts := make([]sequence.Sequence, 0, 100)
 	backs := make([]sequence.Sequence, 0, 100)
-	seqSet := sequence.NewFastaSequenceSet(frontAdapters, 0)
+	seqSet := sequence.NewFastaSequenceSet(frontAdapters, 0, 1)
 	seqs := seqSet.GetSequences()
 	for seq := range seqs {
 		fronts = append(fronts, seq)
 	}
-	seqSet = sequence.NewFastaSequenceSet(backAdapters, 0)
+	seqSet = sequence.NewFastaSequenceSet(backAdapters, 0, 1)
 	seqs = seqSet.GetSequences()
 	for seq := range seqs {
 		backs = append(backs, seq)
@@ -99,10 +97,8 @@ func (t *Trimmer) SetVerbosity(level int) {
 }
 
 //SetTrimParams updates the parameters to be used by any following calls to Trim.
-func (t *Trimmer) SetTrimParams(endThreshold, midThreshold, absThreshold, extraEdgeTrim, extraMidTrim int, keepSplits bool, tagAdapters bool) {
-	t.endThreshold = endThreshold
+func (t *Trimmer) SetTrimParams(midThreshold, extraEdgeTrim, extraMidTrim int, keepSplits bool, tagAdapters bool) {
 	t.midThreshold = midThreshold
-	t.absThreshold = absThreshold
 	t.extraEdgeTrim = extraEdgeTrim
 	t.extraMidTrim = extraMidTrim
 	t.keepSplits = keepSplits
@@ -128,26 +124,26 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	}
 
 	edgeSize := 150
-	minSeqLength := 1000 //splits need to be longer than this
+	minSeqLength := 500 //splits need to be longer than this
 
 	//now query for internal matches
 	if t.verbosity > 0 {
-		log.Println("Searching", t.index.GetNumSequences(), "sequences for splitting based on", len(t.frontAdapters), "adapters")
+		log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
 	}
 	splits := make([]*sequenceSplit, t.index.GetNumSequences(), t.index.GetNumSequences())
 	ids := make([]int, 0, 100)
 	var maxID int
 	for i, ad := range t.frontAdapters {
-		minMatch := ad.GetNumSeeds() / 3
-		ms := t.index.Matches(ad, 0.5)
+		minMatch := ad.GetNumSeeds() / 5
+		ms := t.index.Matches(ad, 0.2)
 		//fire off workers to handle the matches
 		count := 0
 		for _, index := range ms {
 			target := t.index.GetSeedSequence(uint(index))
 			match := target.Match(ad, t.frontAdapterSets[i], minMatch, t.k)
-			if match != nil && len(match.MatchA) >= minMatch {
+			if match != nil {
 				identity, _ := match.GetBasesCovered(t.k)
-				if identity < t.absThreshold && (identity*100)/ad.Len() < t.midThreshold {
+				if (identity*100)/ad.Len() < t.midThreshold {
 					continue
 				}
 				start := target.GetOffset() + target.GetSeedOffset(match.MatchB[0], t.k) - ad.GetSeedOffset(match.MatchA[0], t.k)
@@ -175,6 +171,9 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 							splits[id].bStart = start + ad.Len() + t.extraMidTrim - futureTrim
 						}
 					} else {
+						if t.verbosity > 2 {
+							log.Println(match.LongString(t.k))
+						}
 						splits[id] = &sequenceSplit{id: id, aEnd: start - t.extraMidTrim - futureTrim, bStart: start + ad.Len() + t.extraMidTrim - futureTrim}
 						ids = append(ids, id)
 						if id > maxID {
@@ -202,7 +201,7 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 		if t.keepSplits {
 			if t.verbosity > 1 {
 				log.Println("Splitting read ", split.id, " into: 0 -", split.aEnd, "and", split.bStart, "-", seq.Len())
-				log.Println(seq.SubSequence(split.aEnd+edgeSize, split.bStart-edgeSize).String())
+				log.Println(seq.SubSequence(split.aEnd+t.extraMidTrim, split.bStart-t.extraMidTrim).String())
 			}
 			seqs.AddSequence(seq.SubSequence(0, split.aEnd), seqs.GetName(split.id)+" (left)")
 			seqs.AddSequence(seq.SubSequence(split.bStart, seq.Len()), seqs.GetName(split.id)+" (right)")
@@ -289,7 +288,7 @@ func (t *Trimmer) isNewFullMatch(kmerSet *util.IntSet, seq sequence.Sequence, th
 			continue //we already know this is a good adapter
 		}
 		hits := kmerSet.CountIntersection(adapter)
-		minHits := (adapter.Size() * 7) / 10 //70% shared kmers minimum
+		minHits := adapter.Size() / 2 //50% shared kmers minimum (test actual identity later)
 		if hits >= minHits {
 			//test their ordering
 			if seedSeq == nil {
@@ -312,29 +311,41 @@ func (t *Trimmer) findMatches(kmerSet *util.IntSet, seq sequence.Sequence, adapt
 	latest := 0
 	found := false
 	var bestMatch int
-	var bestHits int
+	var bestIdent int
 	var barcoded bool
+	var ambiguous bool
 	for i, adapter := range adapterSets {
 		hits := kmerSet.CountIntersection(adapter)
 		fraction := (hits * 10) / adapter.Size()
-		if fraction >= 3 || hits > 4 { //enough matching to go to next test
+		if fraction >= 2 || hits >= 3 { //enough matching to go to next test
 			if seedSeq == nil {
 				seedSeq = t.index.NewSeedSequence(seq, 0, nil)
 			}
 			//have enough k-mers, check their ordering
-			m := seedSeq.Match(adapters[i], adapter, 4, t.k)
-			if m != nil && len(m.MatchA) >= 4 {
-				if !barcoded {
-					name := adapters[i].GetName()
-					if strings.HasPrefix(name, "Barcode") {
-						barcoded = true
-						bestMatch = i
-					} else if len(m.MatchA) > bestHits {
-						bestHits = len(m.MatchA)
-						bestMatch = i
+			m := seedSeq.Match(adapters[i], adapter, 3, t.k)
+			if m != nil && len(m.MatchA) >= 3 {
+				identity, _ := m.GetBasesCovered(t.k)
+				identity = (identity * 100) / adapters[i].Len()
+				isBarcode := strings.HasPrefix(adapters[i].GetName(), "Barcode")
+				if !barcoded && isBarcode {
+					barcoded = true
+					bestIdent = identity
+					bestMatch = i
+				} else if barcoded {
+					if isBarcode {
+						//test for ambiguity
+						delta := identity - bestIdent
+						ambiguous = delta < 5 && delta > -5
+						if identity > bestIdent {
+							bestIdent = identity
+							bestMatch = i
+						}
 					}
+				} else if identity > bestIdent {
+					bestIdent = identity
+					bestMatch = i
 				}
-				//loose criteria is fine. We want high recall, precision isn't so important.
+
 				start := seedSeq.GetSeedOffset(m.MatchB[0], t.k) + adapters[i].GetSeedOffset(m.MatchA[0], t.k)
 				end := seedSeq.GetSeedOffset(m.MatchB[len(m.MatchB)-1], t.k) + adapters[i].GetSeedOffsetFromEnd(m.MatchA[len(m.MatchA)-1], t.k)
 				if start < earliest {
@@ -355,6 +366,10 @@ func (t *Trimmer) findMatches(kmerSet *util.IntSet, seq sequence.Sequence, adapt
 				t.lock.Unlock()
 			}
 		}
+	}
+	if ambiguous {
+		//trim, but pretend we didn't see an adapter
+		return earliest, latest, false, 0
 	}
 	return earliest, latest, found, bestMatch
 }
@@ -391,6 +406,10 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 			continue
 		}
 		kmers := seq.ShortKmers(t.k) //more sensitive
+		if len(kmers) < edgeSize+50 {
+			//can occur due to homopolymer collapsing
+			continue
+		}
 		//manually check first 150 vs front adapters and last 150 vs back adapters
 		kmerSet.Clear()
 		for _, k := range kmers[:edgeSize] {
