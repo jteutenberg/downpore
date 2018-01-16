@@ -16,7 +16,7 @@ type Sequence interface {
 	GetOffset() int
 	GetInset() int
 	Kmers(int) []uint64
-	ShortKmers(int) []uint16
+	ShortKmers(int,bool) []uint16
 	Quality() []byte
 	Detach() //ensure this sequence does not have slice references on shared arrays
 	getBytes() []byte
@@ -61,6 +61,21 @@ func NewByteSequenceFromKmers(id int, kmers []uint16, k int) Sequence {
 	s := byteSequence{data: data, quality: nil, id: id, offset: 0, inset: 0}
 	return &s
 }
+
+//Find determines the best matching position of a subsequence within start to end of this sequence
+/*func (s *byteSequence) Find(subs Sequence, subsKmers *util.IntSet, k int) int {
+	//build kmers of this sequence
+	kmers := util.NewIntSet()
+	ks := s.ShortKmers(k)
+	for _, n := range ks {
+		subKmers.Add(uint(n))
+	}
+	//find those shared
+	kmers.Intersect(subsKmers)
+	//generate gapped-seed sequences
+	//and get the best linear match
+
+}*/
 
 func (s *byteSequence) StitchSequence(rhs Sequence, minOverlap, maxOverlap int) int {
 	if maxOverlap > s.Len() {
@@ -192,8 +207,8 @@ func (s *byteSequence) Kmers(k int) []uint64 {
 	return kmers
 }
 
-//ShortKmers produces a list of kmers (up to 8-mers in length), collapsing homopolymers
-func (s *byteSequence) ShortKmers(k int) []uint16 {
+//ShortKmers produces a list of kmers (up to 8-mers in length), collapsing homopolymers if required
+func (s *byteSequence) ShortKmers(k int, collapse bool) []uint16 {
 	length := len(s.data) - k + 1
 	kmers := make([]uint16, length, length)
 
@@ -206,7 +221,7 @@ func (s *byteSequence) ShortKmers(k int) []uint16 {
 	var prev uint16
 	index := 0
 	for i := k; i < len(s.data); i++ {
-		if v != prev || index == 0 {
+		if !collapse || v != prev || index == 0 {
 			//store and shift
 			kmers[index] = v
 			prev = v

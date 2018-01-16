@@ -55,7 +55,7 @@ func (t *Trimmer) setupIndex() {
 		t.frontAdapters = append(t.frontAdapters, t.index.NewAllSeedSequence(s))
 		set := util.NewIntSet()
 		t.frontAdapterSets = append(t.frontAdapterSets, set)
-		kmers := s.ShortKmers(t.k)
+		kmers := s.ShortKmers(t.k, true)
 		for _, kmer := range kmers {
 			set.Add(uint(kmer))
 		}
@@ -65,7 +65,7 @@ func (t *Trimmer) setupIndex() {
 		t.backAdapters = append(t.backAdapters, t.index.NewAllSeedSequence(s))
 		set := util.NewIntSet()
 		t.backAdapterSets = append(t.backAdapterSets, set)
-		kmers := s.ShortKmers(t.k)
+		kmers := s.ShortKmers(t.k, true)
 		for _, kmer := range kmers {
 			set.Add(uint(kmer))
 		}
@@ -381,17 +381,20 @@ func (t *Trimmer) checkAdapterWorker(set sequence.SequenceSet, frontEnabled, bac
 		if seq.Len() < edgeSize+50 {
 			continue
 		}
-		kmers := seq.ShortKmers(t.k)
+		frontSeq := seq.SubSequence(0, edgeSize)
+		backSeq := seq.SubSequence(seq.Len()-edgeSize, seq.Len())
+		kmers := frontSeq.ShortKmers(t.k, true)
 		kmerSet.Clear()
-		for _, k := range kmers[:edgeSize] {
+		for _, k := range kmers {
 			kmerSet.Add(uint(k))
 		}
-		t.isNewFullMatch(kmerSet, seq.SubSequence(0, edgeSize), threshold, t.frontAdapters, t.frontAdapterSets, frontEnabled)
+		t.isNewFullMatch(kmerSet, frontSeq, threshold, t.frontAdapters, t.frontAdapterSets, frontEnabled)
 		kmerSet.Clear()
-		for _, k := range kmers[len(kmers)-edgeSize:] {
+		kmers = backSeq.ShortKmers(t.k, true)
+		for _, k := range kmers {
 			kmerSet.Add(uint(k))
 		}
-		t.isNewFullMatch(kmerSet, seq.SubSequence(seq.Len()-edgeSize, seq.Len()), threshold, t.backAdapters, t.backAdapterSets, backEnabled)
+		t.isNewFullMatch(kmerSet, backSeq, threshold, t.backAdapters, t.backAdapterSets, backEnabled)
 	}
 	done <- true
 }
@@ -405,22 +408,21 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 		if seq.Len() < edgeSize+50 {
 			continue
 		}
-		kmers := seq.ShortKmers(t.k) //more sensitive
-		if len(kmers) < edgeSize+50 {
-			//can occur due to homopolymer collapsing
-			continue
-		}
+		frontSeq := seq.SubSequence(0, edgeSize)
+		backSeq := seq.SubSequence(seq.Len()-edgeSize, seq.Len())
+		kmers := frontSeq.ShortKmers(t.k, true) //more sensitive
 		//manually check first 150 vs front adapters and last 150 vs back adapters
 		kmerSet.Clear()
-		for _, k := range kmers[:edgeSize] {
+		for _, k := range kmers {
 			kmerSet.Add(uint(k))
 		}
-		_, start, foundStart, matchIndex := t.findMatches(kmerSet, seq.SubSequence(0, edgeSize), t.frontAdapters, t.frontAdapterSets, t.frontCounts)
+		_, start, foundStart, matchIndex := t.findMatches(kmerSet, frontSeq, t.frontAdapters, t.frontAdapterSets, t.frontCounts)
 		kmerSet.Clear()
-		for _, k := range kmers[len(kmers)-edgeSize:] {
+		kmers = backSeq.ShortKmers(t.k, true) //more sensitive
+		for _, k := range kmers {
 			kmerSet.Add(uint(k))
 		}
-		end, _, foundEnd, _ := t.findMatches(kmerSet, seq.SubSequence(seq.Len()-edgeSize, seq.Len()), t.backAdapters, t.backAdapterSets, t.backCounts)
+		end, _, foundEnd, _ := t.findMatches(kmerSet, backSeq, t.backAdapters, t.backAdapterSets, t.backCounts)
 		if !foundStart {
 			t.lock.Lock()
 			t.noCount++

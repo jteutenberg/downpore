@@ -49,6 +49,8 @@ Output reads are written to stdout and will be in the same format as the input r
 ## Trim overview
 The trim command uses k-mer matching and linearisation to find sub-sequences of reads that match any adapter/barcode from a list provided by the user.  Adapters found in the middle of long reads cause that read to be split.
 
+Example adapter lists can be found in `data/adapters_front.fasta` and `data/adapters_back.fasta`.
+
 Where possible, arguments and their default values mirror those of Porechop. Important functional differences are that downpore trim does not pair up front and back adapters (all are treated as being independent); and there is no notion of good and bad sides of an internal adapter: both are conservatively treated as bad.
 
 ### Matching criteria
@@ -56,7 +58,7 @@ Adapters are identified with high recall at the edges (first and last 150 bases)
 
 By default, 6-mers are used in matching. At the edges, an adapter is identified as being present when at least 3 kmers match in-order and at approximately the expected distance from one another. This means that at a minimum 8 continguous matching bases are present.
 
-Internal matches are made when the "identity" matching passes the threshold specified by `-middle_threshold` (default 85%). The identity value is taken as the percentage of bases in the adapter that are contained in at least one matching k-mer. In addition, matches are made if a large absolute number of bases are matched (e.g. when matching long adapters, but less than `middle_threshold`).
+Internal matches are made when the "identity" matching passes the threshold specified by `-middle_threshold` (default 85%). The identity value is taken as the percentage of bases in the adapter that are contained in at least one matching k-mer. 
 
 ### Sequence labels
 By default, the adapter/barcode with the most bases present in a read has its name appended to the beginning of the read's label in the trimmed output. This can be turned off using `tag_adapters`.
@@ -69,7 +71,6 @@ Adapters with names beginning "Barcode" are a special case. These take precedenc
 * `back_adapters` fasta containing adapters found at the end of reads
 * `k` the size of k-mers to use in matching
 * `middle_threshold` percentage identity to match an internal adapter
-* `absolute_threshold` number of bases to also match an internal adapter
 * `discard_middle` whether or not to keep the splits resulting from an internal match
 * `check_reads` number of reads to consider when determining adapters present in the data
 * `adapter_threshold` the identity to match an adapter when performing check_reads
@@ -106,3 +107,5 @@ Trimming was performed on a low spec 4-core machine with an SSD.
 In terms of adapters found, downpore typically finds a few percent more at the edges of reads. In the examples, Porechop also applies a back adapter (trimming ~3-5% of reads) that is not clearly present in the first 10k reads but includes it based on its association with a front adapter.
 
 With downpore's `middle_threshold` set to 80 (rather than default 85) the two sets of splits are typically the same. Porechop reports a higher number of middle adapters as it includes some near the edges that downpore treats as a front/back trim instead.
+
+For those repeating the above tests, also note that Porechop finds a number of false positive splits in E.coli. These come from an 86% identity match to the short back adapter that is present in the E.coli genome.
