@@ -46,6 +46,7 @@ The trim command is used to remove adapters or barcodes from the end of long rea
 Input reads are specified using the `-i` argument. Output reads are written to stdout and will be in the same format as the input reads.
 
 Usage example:
+
 ```downpore trim -i reads.fastq -f ./data/adapters_front.fasta -b ./data/adapters_back.fasta > trimmed.fastq```
 
 ## Trim overview
