@@ -26,7 +26,7 @@ To build downpore from source:
 * enter the new downpore directory and build it using `go build downpore.go`
 
 ### Run precompiled binary
-A stand-alone, pre-compiled binary is available at https://github.com/jteutenberg/downpore/releases/latest
+A stand-alone, pre-compiled binary for Linux x86-64 is available at https://github.com/jteutenberg/downpore/releases/latest
 
 # Usage
 The general form of execution is
