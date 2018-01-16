@@ -6,7 +6,7 @@ A suite of tools for use in genome assembly and consensus. Work in progress.
   * [Build from source](#build-from-source)
   * [Run precompiled binary](#run-precompile-binary)
 * [Usage](#usage)
-* [Command: trim](#command:-trim)
+* [Command: trim](#command-trim)
   * [Trim overview](#trim-overview)
     * [Matching criteria](#matching-criteria)
     * [Sequence labels](#sequence-labels)
@@ -20,12 +20,13 @@ Downpore is written in Go and requires no external libraries. It has been tested
 ### Build from source
 To build downpore from source:
 
-* install Go 1.8 or higher [https://golang.org/doc/install] and git
+* install Go 1.8 or higher (see https://golang.org/doc/install) and git
 * create a directory `$GOPATH/src/github.com/jteutenberg`
 * from that directory, clone the downpore repository `git clone https://github.com/jteutenberg/downpore.git`
 * enter the new downpore directory and build it using `go build downpore.go`
 
 ### Run precompiled binary
+A stand-alone, pre-compiled binary is available at https://github.com/jteutenberg/downpore/releases/latest
 
 # Usage
 The general form of execution is
@@ -61,7 +62,7 @@ By default, 6-mers are used in matching. At the edges, an adapter is identified 
 Internal matches are made when the "identity" matching passes the threshold specified by `-middle_threshold` (default 85%). The identity value is taken as the percentage of bases in the adapter that are contained in at least one matching k-mer. 
 
 ### Sequence labels
-By default, the adapter/barcode with the most bases present in a read has its name appended to the beginning of the read's label in the trimmed output. This can be turned off using `tag_adapters`.
+By default, the adapter/barcode with the most bases present in a read has its name appended to the beginning of the read's label in the trimmed output. This can be turned off using `-tag_adapters`.
 
 Adapters with names beginning "Barcode" are a special case. These take precedence and will always be used in the output label if found, though the trimming will still be based on all adapters present. If there exist two barcodes that are within 5% identity in a read (i.e. ambiguous barcodes) then no adapter labels will be written.
 
@@ -88,21 +89,21 @@ The main use case for the downpore trim command is for those situations in which
 
 ### Performance test data
 Three data sets: 
-* E.coli small: 500MB of E.coli, R9.4 Albacore 2.1+ from Birmingham (Bham_20171116_1xRAD004_6000ng.pass.fastq)
-* E.coli: 1.5GB E.coli, R9.4 from Loman lab (E_coli_K12_1D_R9.2_SpotON_2.pass.fasta)
+* E.coli small: 500MB of E.coli, R9.4 from Birmingham Uni (Bham_20171116_1xRAD004_6000ng.pass.fastq)
+* E.coli: 1.5GB E.coli, R9.2 from Loman lab (E_coli_K12_1D_R9.2_SpotON_2.pass.fasta)
 * Human: 2GB of chromosome 20 (na12878.chr20ScrappieFiltered.fasta) 
 
 ### Results
 
 Trimming was performed on a low spec 4-core machine with an SSD.
 
-| Data | Speedup | downpore memory | Porechop memory |
-| --- | --- :| --- :| --- :|
-| E.coli small | 24x | 0.5GB | 1.1GB |
-| E.coli small .gz | 6x | 0.5GB | 1.1GB |
-| E.coli | 17x | 2.3GB  | 3.6GB |
-| E.coli .gz | 11x | 2.3GB | 3.6GB |
-| Human | 24x | 2.2GB | 4.3GB |
+Data | Speedup | downpore memory | Porechop memory 
+---| ---:| ---:| ---:
+E.coli small | 24x | 0.5GB | 1.1GB 
+E.coli small .gz | 6x | 0.5GB | 1.1GB 
+E.coli | 17x | 2.3GB  | 3.6GB 
+E.coli .gz | 11x | 2.3GB | 3.6GB 
+Human | 24x | 2.2GB | 4.3GB 
 
 In terms of adapters found, downpore typically finds a few percent more at the edges of reads. In the examples, Porechop also applies a back adapter (trimming ~3-5% of reads) that is not clearly present in the first 10k reads but includes it based on its association with a front adapter.
 
