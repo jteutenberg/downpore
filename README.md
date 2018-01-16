@@ -20,7 +20,7 @@ Downpore is written in Go and requires no external libraries. It has been tested
 ### Build from source
 To build downpore from source:
 
-* install Go 1.8 or higher (see https://golang.org/doc/install) and git
+* install [Go 1.8 or higher](https://golang.org/doc/install) and git
 * create a directory `$GOPATH/src/github.com/jteutenberg`
 * from that directory, clone the downpore repository `git clone https://github.com/jteutenberg/downpore.git`
 * enter the new downpore directory and build it using `go build downpore.go`
@@ -41,11 +41,9 @@ To see the available arguments for a command, use `downpore help <command>`.
 Input reads must be a fasta/fastq file or a gzip (with .gz suffix) containing a fasta/fastq. Fasta files with multiple lines per sequence are not handled and will need to have end-lines removed.
 
 # Command: trim
-The trim command is used to remove adapters or barcodes from the end of long reads. It broadly performs the same function as Porechop [https://github.com/rrwick/Porechop], and whle downpore is less polished it is substantially faster.
+The trim command is used to remove adapters or barcodes from the end of long reads. It broadly performs the same function as [Porechop](https://github.com/rrwick/Porechop), and whle downpore is less polished it is substantially faster.
 
-Input reads are specified using the `-i` argument and must be a fasta/fastq file or a gzip (with .gz suffix) containing a fasta/fastq.
-
-Output reads are written to stdout and will be in the same format as the input reads.
+Input reads are specified using the `-i` argument. Output reads are written to stdout and will be in the same format as the input reads.
 
 ## Trim overview
 The trim command uses k-mer matching and linearisation to find sub-sequences of reads that match any adapter/barcode from a list provided by the user.  Adapters found in the middle of long reads cause that read to be split.
@@ -57,14 +55,14 @@ Where possible, arguments and their default values mirror those of Porechop. Imp
 ### Matching criteria
 Adapters are identified with high recall at the edges (first and last 150 bases) and with higher precision in the middle of a read.
 
-By default, 6-mers are used in matching. At the edges, an adapter is identified as being present when at least 3 kmers match in-order and at approximately the expected distance from one another. This means that at a minimum 8 continguous matching bases are present.
+By default, 6-mers are used in matching. At the edges, an adapter is identified as being present when at least 3 k-mers match in-order and at approximately the expected distance from one another. This means that at a minimum 8 contiguous matching bases are present.
 
 Internal matches are made when the "identity" matching passes the threshold specified by `-middle_threshold` (default 85%). The identity value is taken as the percentage of bases in the adapter that are contained in at least one matching k-mer. 
 
 ### Sequence labels
 By default, the adapter/barcode with the most bases present in a read has its name appended to the beginning of the read's label in the trimmed output. This can be turned off using `-tag_adapters`.
 
-Adapters with names beginning "Barcode" are a special case. These take precedence and will always be used in the output label if found, though the trimming will still be based on all adapters present. If there exist two barcodes that are within 5% identity in a read (i.e. ambiguous barcodes) then no adapter labels will be written.
+Adapters with names beginning "Barcode" are a special case. These take precedence and will always be used in the output label if found, though the trimming will still be based on all adapters present. If there exist two barcodes that are within 5% identity in a read (i.e. ambiguous barcodes) then no adapter labels will be written. Take care: this has not been thoroughly tested.
 
 ## Trim arguments
 * `input` the input reads file
@@ -105,8 +103,8 @@ E.coli | 17x | 2.3GB  | 3.6GB
 E.coli .gz | 11x | 2.3GB | 3.6GB 
 Human | 24x | 2.2GB | 4.3GB 
 
-In terms of adapters found, downpore typically finds a few percent more at the edges of reads. In the examples, Porechop also applies a back adapter (trimming ~3-5% of reads) that is not clearly present in the first 10k reads but includes it based on its association with a front adapter.
+In terms of adapters found, downpore typically finds a few percent more at the edges of reads. In the test examples, Porechop also applies a back adapter (which trimmed ~3-5% of reads) that is not clearly present in the first 10k reads but was included based on its association with a front adapter.
 
 With downpore's `middle_threshold` set to 80 (rather than default 85) the two sets of splits are typically the same. Porechop reports a higher number of middle adapters as it includes some near the edges that downpore treats as a front/back trim instead.
 
-For those repeating the above tests, also note that Porechop finds a number of false positive splits in E.coli. These come from an 86% identity match to the short back adapter that is present in the E.coli genome.
+For those repeating the above tests, also note that Porechop finds a number of false positive splits in E.coli. These come from an 86% identity match to the short back adapter that is actually present in the E.coli genome.
