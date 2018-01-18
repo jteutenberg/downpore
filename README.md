@@ -15,7 +15,7 @@ A suite of tools for use in genome assembly and consensus. Work in progress.
   * [Porechop performance comparison](#porechop-performance-comparison)
 
 # Installation
-Downpore is written in Go and requires no external libraries. It has been tested on Linux but should compile and run on Mac OS and Windows too. Go 1.8 or higher is required.
+Downpore is written in Go and requires no external libraries. It has been tested on Linux but should compile and run on Mac OS and Windows too.
 
 ### Build from source
 To build downpore from source:
@@ -40,13 +40,19 @@ To see the available arguments for a command, use `downpore help <command>`.
 ## Read input format
 Input reads must be a fasta/fastq file or a gzip (with .gz suffix) containing a fasta/fastq. Fasta files with multiple lines per sequence are not handled and will need to have end-lines removed.
 
+Only DNA sequences composed of A,C,G and T are accepted. Other characters will be assigned one of these values.
+
 # Command: trim
-The trim command is used to remove adapters or barcodes from the end of long reads. It broadly performs the same function as [Porechop](https://github.com/rrwick/Porechop), and whle downpore is less polished it is substantially faster.
+The trim command is used to remove adapters or barcodes from the end of long reads. It broadly performs the same function as [Porechop](https://github.com/rrwick/Porechop), and while downpore is less polished it is substantially faster.
 
 Input reads are specified using the `-i` argument. Output reads are written to stdout and will be in the same format as the input reads.
 
+Usage example:
+
+```downpore trim -i reads.fastq -f ./data/adapters_front.fasta -b ./data/adapters_back.fasta > trimmed.fastq```
+
 ## Trim overview
-The trim command uses k-mer matching and linearisation to find sub-sequences of reads that match any adapter/barcode from a list provided by the user.  Adapters found in the middle of long reads cause that read to be split.
+The trim command uses k-mer matching and chaining to find sub-sequences of reads that match any adapter/barcode from a list provided by the user.  Adapters found in the middle of long reads cause that read to be split.
 
 Example adapter lists can be found in `data/adapters_front.fasta` and `data/adapters_back.fasta`.
 
