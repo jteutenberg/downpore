@@ -19,11 +19,13 @@ type Trimmer struct {
 	backAdapterSets  []*util.IntSet
 	index            *seeds.SeedIndex
 	k                int
+	chunkSize        int
 
 	lock        *sync.Mutex
 	frontCounts []int
 	backCounts  []int
 	noCount     int
+	seenCount   int
 
 	midThreshold  int
 	extraEdgeTrim int
@@ -44,7 +46,7 @@ func NewTrimmer(frontAdapters, backAdapters []sequence.Sequence, k int) *Trimmer
 	var lock sync.Mutex
 	t := Trimmer{originalFront: frontAdapters, originalBack: backAdapters, frontAdapters: make([]*seeds.SeedSequence, 0, len(frontAdapters)), backAdapters: make([]*seeds.SeedSequence, 0, len(backAdapters)), frontAdapterSets: make([]*util.IntSet, 0, len(frontAdapters)), backAdapterSets: make([]*util.IntSet, 0, len(backAdapters)), index: nil, k: k, frontCounts: nil, backCounts: nil, noCount: 0, lock: &lock, verbosity: 1}
 	(&t).setupIndex()
-	t.SetTrimParams(85, 5, 50, false, true)
+	t.SetTrimParams(85, 5, 50, 1000, false, true)
 	return &t
 }
 
@@ -78,12 +80,12 @@ func (t *Trimmer) setupIndex() {
 func LoadTrimmer(frontAdapters, backAdapters string, k int) *Trimmer {
 	fronts := make([]sequence.Sequence, 0, 100)
 	backs := make([]sequence.Sequence, 0, 100)
-	seqSet := sequence.NewFastaSequenceSet(frontAdapters, 0, 1)
+	seqSet := sequence.NewFastaSequenceSet(frontAdapters, 0, 1, false)
 	seqs := seqSet.GetSequences()
 	for seq := range seqs {
 		fronts = append(fronts, seq)
 	}
-	seqSet = sequence.NewFastaSequenceSet(backAdapters, 0, 1)
+	seqSet = sequence.NewFastaSequenceSet(backAdapters, 0, 1, false)
 	seqs = seqSet.GetSequences()
 	for seq := range seqs {
 		backs = append(backs, seq)
@@ -97,12 +99,13 @@ func (t *Trimmer) SetVerbosity(level int) {
 }
 
 //SetTrimParams updates the parameters to be used by any following calls to Trim.
-func (t *Trimmer) SetTrimParams(midThreshold, extraEdgeTrim, extraMidTrim int, keepSplits bool, tagAdapters bool) {
+func (t *Trimmer) SetTrimParams(midThreshold, extraEdgeTrim, extraMidTrim int, chunkSize int, keepSplits bool, tagAdapters bool) {
 	t.midThreshold = midThreshold
 	t.extraEdgeTrim = extraEdgeTrim
 	t.extraMidTrim = extraMidTrim
 	t.keepSplits = keepSplits
 	t.tagAdapters = tagAdapters
+	t.chunkSize = chunkSize
 }
 
 //Trim searches all sequences for adapters and updates the SequenceSet's offsets accordingly
@@ -152,7 +155,7 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 					if start+ad.Len()+edgeSize < seqLen {
 						seqs.SetFrontTrim(target.GetID(), start+ad.Len()+t.extraMidTrim)
 						if t.tagAdapters {
-							seqs.SetName(target.GetID(), ad.GetName()+" "+seqs.GetName(target.GetID()))
+							seqs.SetName(target.GetID(), ad.GetName()+"_"+seqs.GetName(target.GetID()))
 						}
 					} else {
 						seqs.SetIgnore(target.GetID(), true)
@@ -213,12 +216,12 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 //PrintStats outputs to stderr all adapters present (reduced after DetermineAdapters is called) and the percentage of reads containing them (modified after a call to Trim)
 func (t *Trimmer) PrintStats(seqs sequence.SequenceSet) {
 	for i, count := range t.frontCounts {
-		log.Println("Front adapter:", t.originalFront[i].GetName(), "\t", (count*100)/seqs.Size(), "%")
+		log.Println("Front adapter:", t.originalFront[i].GetName(), "\t", (count*100)/t.seenCount, "%")
 	}
 	for i, count := range t.backCounts {
-		log.Println("Back adapter:", t.originalBack[i].GetName(), "\t", (count*100)/seqs.Size(), "%")
+		log.Println("Back adapter:", t.originalBack[i].GetName(), "\t", (count*100)/t.seenCount, "%")
 	}
-	log.Println((t.noCount*100)/seqs.Size(), "% with no adapters found.")
+	log.Println((t.noCount*100)/t.seenCount, "% with no adapters found.")
 }
 
 //DetermineAdapters runs through the first numReads reads, discarding adapters from the trimmer's set that
@@ -423,11 +426,13 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 			kmerSet.Add(uint(k))
 		}
 		end, _, foundEnd, _ := t.findMatches(kmerSet, backSeq, t.backAdapters, t.backAdapterSets, t.backCounts)
+
+		t.lock.Lock()
+		t.seenCount++
 		if !foundStart {
-			t.lock.Lock()
 			t.noCount++
-			t.lock.Unlock()
 		}
+		t.lock.Unlock()
 		start += t.extraEdgeTrim
 		end = edgeSize - end + t.extraEdgeTrim //convert to trim amount
 		if start+end+10 >= seq.Len() {
@@ -436,23 +441,22 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 			if foundStart {
 				set.SetFrontTrim(seq.GetID(), start)
 				if t.tagAdapters {
-					set.SetName(seq.GetID(), t.frontAdapters[matchIndex].GetName()+" "+set.GetName(seq.GetID()))
+					set.SetName(seq.GetID(), t.frontAdapters[matchIndex].GetName()+"_"+set.GetName(seq.GetID()))
 				}
 			}
 			if foundEnd {
 				set.SetBackTrim(seq.GetID(), end)
 			}
 			//put the remaining centre of the sequence into the index for later querying
-			chunkSize := 1000
-			for i := edgeSize; i < seq.Len()-edgeSize-longestAdapter; i += chunkSize - longestAdapter { //100 is minimum non-edge sequence size, and max expected adapter size
-				if i > seq.Len()-(chunkSize*3)/2-edgeSize {
+			for i := edgeSize; i < seq.Len()-edgeSize-longestAdapter; i += t.chunkSize - longestAdapter { //100 is minimum non-edge sequence size, and max expected adapter size
+				if i > seq.Len()-(t.chunkSize*3)/2-edgeSize {
 					//add the entire remainder
 					seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, seq.Len()-edgeSize), 0, nil)
 					t.index.AddSequence(seedSeq)
 					break
 				} else {
 					//just a chunk
-					endPoint := i + chunkSize
+					endPoint := i + t.chunkSize
 					if endPoint >= seq.Len()-edgeSize {
 						endPoint = seq.Len() - edgeSize
 					}

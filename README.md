@@ -31,7 +31,7 @@ A stand-alone, pre-compiled binary for Linux x86-64 is available at https://gith
 # Usage
 The general form of execution is
 ```downpore <command> [arguments]```
-where arguments are provided with a single-hyphen switch followed by a space and then its value.
+where arguments are provided with either a one- or two-hyphen switch followed by a space or equals sign and then its value.
 
 Running `downpore` with no arguments gives a list of available commands.
 
@@ -69,6 +69,7 @@ Adapters with names beginning "Barcode" are a special case. These take precedenc
 * `front_adapters` fasta containing adapters found at the beginning of reads
 * `back_adapters` fasta containing adapters found at the end of reads
 * `k` the size of k-mers to use in matching
+* `chunk_size` the size to split long input reads into when indexing
 * `middle_threshold` percentage identity to match an internal adapter
 * `discard_middle` whether or not to keep the splits resulting from an internal match
 * `check_reads` number of reads to consider when determining adapters present in the data
@@ -78,12 +79,15 @@ Adapters with names beginning "Barcode" are a special case. These take precedenc
 * `tag_adapters` whether or not to modify output labels
 * `verbosity` a level of logging output (written to stderr)
 * `num_workers` number of threads to use to build the search index for internal adapters
+* `himem` whether or not to cache input reads in memory
 
 ## De-multiplexing
 The trim command does not explicitly de-multiplex data. If this is required then the barcode labels on reads can be used by an external script to partition the output.
 
 ## Porechop performance comparison
 The main use case for the downpore trim command is for those situations in which Porechop is the bottleneck in your pipeline, or possibly when there are memory constraints. In terms of performance, downpore is I/O bound as it makes two passes through the input file, whereas Porechop is CPU bound. As such, all comparisons below are based on wall-clock time.
+
+When the `-himem` argument is set the trim uses only a single pass through the input file and this has been tested separately.
 
 ### Performance test data
 Three data sets: 
@@ -95,13 +99,13 @@ Three data sets:
 
 Trimming was performed on a low spec 4-core machine with an SSD.
 
-Data | Speedup | downpore memory | Porechop memory 
+Data | Speedup | Speedup (HiMem) | downpore memory | downpore (HiMem) memory | Porechop memory 
 ---| ---:| ---:| ---:
-E.coli small | 24x | 0.5GB | 1.1GB 
-E.coli small .gz | 6x | 0.5GB | 1.1GB 
-E.coli | 17x | 2.3GB  | 3.6GB 
-E.coli .gz | 11x | 2.3GB | 3.6GB 
-Human | 24x | 2.2GB | 4.3GB 
+E.coli small | 31x | 34x | 0.3GB | 1.1GB | 1.1GB 
+E.coli small .gz | 6x | 11x | 0.3GB | 1.1GB | 1.1GB 
+E.coli | 25x | | 1.7GB | | 3.6GB 
+E.coli .gz | 11x | | 2.3GB | | 3.6GB 
+Human | 31x | | 1.3GB | | 4.3GB 
 
 In terms of adapters found, downpore typically finds a few percent more at the edges of reads. In the test examples, Porechop also applies a back adapter (which trimmed ~3-5% of reads) that is not clearly present in the first 10k reads but was included based on its association with a front adapter.
 

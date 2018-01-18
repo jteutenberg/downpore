@@ -44,16 +44,22 @@ type fastaSequenceSet struct {
 	lengths    []int
 	bases      int64
 	names      []string
+	cached     []Sequence
 	minLen     int
 	isFastq    bool //whether quality scores are available or not
 	size       int
 	extras     []Sequence
 	extraNames []string
 	numWorkers int
+	cache      bool //whether or not to cache sequences in memory
+	cacheFull  bool //whether the whole input file has been cached
 }
 
-func NewFastaSequenceSet(filename string, minLength int, numWorkers int) SequenceSet {
-	f := fastaSequenceSet{filename: filename, offsets: make([]int64, 0, 500000), ignore: make([]bool, 0, 500000), frontTrim: make([]int, 0, 500000), backTrim: make([]int, 0, 500000), lengths: make([]int, 0, 500000), bases: 0, names: make([]string, 0, 500000), minLen: minLength, isFastq: false, extras: make([]Sequence, 0, 20), extraNames: make([]string, 0, 20), numWorkers: numWorkers}
+func NewFastaSequenceSet(filename string, minLength int, numWorkers int, cache bool) SequenceSet {
+	f := fastaSequenceSet{filename: filename, offsets: make([]int64, 0, 500000), ignore: make([]bool, 0, 500000), frontTrim: make([]int, 0, 500000), backTrim: make([]int, 0, 500000), lengths: make([]int, 0, 500000), bases: 0, names: make([]string, 0, 500000), minLen: minLength, isFastq: false, extras: make([]Sequence, 0, 20), extraNames: make([]string, 0, 20), numWorkers: numWorkers, cache: cache}
+	if cache {
+		f.cached = make([]Sequence, 0, 500000)
+	}
 	return &f
 }
 
@@ -83,11 +89,32 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 	seqOut := make(chan Sequence, 10)
 	go func() {
 		sentCount := 0
+		var offset int64
+		if f.cache && len(f.cached) > 0 {
+			//send any cached through first, apply trim
+			for ; nextID < len(f.cached) && sentCount < maxSeqs; nextID++ {
+				if !f.ignore[nextID] {
+					seqOut <- f.cached[nextID].SubSequence(f.frontTrim[nextID], f.cached[nextID].Len()-f.backTrim[nextID])
+					sentCount++
+				}
+			}
+			if !f.cacheFull {
+				//need to seek ahead
+				if nextID < len(f.offsets) {
+					offset = f.offsets[nextID]
+				} else if sentCount > 0 {
+					offset = f.offsets[len(f.offsets)-1] + int64(f.cached[len(f.cached)-1].Len()+1)
+				}
+				if _, err := in.Seek(offset, io.SeekStart); err != nil {
+					log.Fatal(err, "during seek. Stopping sequence input here.")
+				}
+			}
+
+		}
 		a := byte('A')
 		t := byte('T')
 		fastqComment := byte('@')
 		plus := byte('+')
-		var offset int64
 		//read any we've seen before, seeking through the file
 		buf := make([]byte, 1000000, 1000000) //up to one mega-base
 		for ; nextID < len(f.ignore) && sentCount < maxSeqs; nextID++ {
@@ -132,7 +159,7 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 						seq.quality = quality
 						offset += int64(m)
 					} else {
-						log.Println("Unexpected quality line size", m, "not matching expected", f.lengths[nextID])
+						log.Println("Unexpected quality line size", m, "not matching expected", f.lengths[nextID], "in", f.names[nextID])
 						break
 					}
 				}
@@ -160,65 +187,72 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 			offset += int64(len(b))
 			lastName = string(b[1:])
 		}
-		//now read any new sequences
-		for buf, err := bin.ReadBytes('\n'); sentCount <= maxSeqs && (len(buf) > 0 || err == nil); buf, err = bin.ReadBytes('\n') {
-			if buf[0] >= a && buf[0] <= t { // a sequence
-				readSeq := len(buf) >= f.minLen
-				if readSeq {
-					f.ignore = append(f.ignore, false)
-					f.offsets = append(f.offsets, offset)
-					f.frontTrim = append(f.frontTrim, 0)
-					f.backTrim = append(f.backTrim, 0)
-					f.lengths = append(f.lengths, len(buf)-1)
-					f.names = append(f.names, strings.Fields(lastName)[0])
-					f.size++
-					//transform into 0-4 values. A=65, C=67, G=71, T=84
-					for i, b := range buf {
-						buf[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
-					}
-					seq := byteSequence{data: buf[:len(buf)-1], id: nextID, name: &(f.names[len(f.names)-1])}
-					f.bases += int64(len(buf) - 1)
-					nextID++
-					//if fastq, read error line
-					if f.isFastq {
-						offset += int64(len(buf))      //the sequence
-						buf, err = bin.ReadBytes('\n') //+ line
-						if err != nil || buf[0] != plus {
-							log.Fatal("Invalid fastq format (on + line):", string(buf))
+
+		if !f.cacheFull {
+			//now read any new sequences
+			for buf, err := bin.ReadBytes('\n'); sentCount < maxSeqs && (len(buf) > 0 || err == nil); buf, err = bin.ReadBytes('\n') {
+				if buf[0] >= a && buf[0] <= t { // a sequence
+					readSeq := len(buf) >= f.minLen
+					if readSeq {
+						f.ignore = append(f.ignore, false)
+						f.offsets = append(f.offsets, offset)
+						f.frontTrim = append(f.frontTrim, 0)
+						f.backTrim = append(f.backTrim, 0)
+						f.lengths = append(f.lengths, len(buf)-1)
+						f.names = append(f.names, strings.Fields(lastName)[0])
+						f.size++
+						//transform into 0-4 values. A=65, C=67, G=71, T=84
+						for i, b := range buf {
+							buf[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
 						}
-						offset += int64(len(buf))
-						buf, _ = bin.ReadBytes('\n') //error line
-						if len(buf) == len(seq.data) {
-							for i, b := range buf {
-								buf[i] = b - 33
+						seq := byteSequence{data: buf[:len(buf)-1], id: nextID, name: &(f.names[len(f.names)-1])}
+						f.bases += int64(len(buf) - 1)
+						nextID++
+						//if fastq, read error line
+						if f.isFastq {
+							offset += int64(len(buf))      //the sequence
+							buf, err = bin.ReadBytes('\n') //+ line
+							if err != nil || buf[0] != plus {
+								log.Fatal("Invalid fastq format (on + line):", string(buf))
 							}
-							seq.quality = buf[:len(buf)-1]
+							offset += int64(len(buf))
+							buf, _ = bin.ReadBytes('\n') //error line
+							if len(buf) == len(seq.data)+1 {
+								for i, b := range buf {
+									buf[i] = b - 33
+								}
+								seq.quality = buf[:len(buf)-1]
+							}
 						}
+						sentCount++
+						if f.cache {
+							f.cached = append(f.cached, &seq)
+						}
+						seqOut <- &seq
+					} else if f.isFastq { //manual skip
+						//manually skip error line
+						offset += int64(len(buf)) //the sequence
+						buf, err = bin.ReadBytes('\n')
+						if err != nil || buf[0] != plus {
+							log.Fatal("Invalid fastq formant (on + line):", string(buf))
+						}
+						offset += int64(len(buf))    //the + line
+						buf, _ = bin.ReadBytes('\n') //error line
 					}
-					sentCount++
-					seqOut <- &seq
-				} else if f.isFastq { //manual skip
-					//manually skip error line
-					offset += int64(len(buf)) //the sequence
-					buf, err = bin.ReadBytes('\n')
-					if err != nil || buf[0] != plus {
-						log.Fatal("Invalid fastq formant (on + line):", string(buf))
-					}
-					offset += int64(len(buf))    //the + line
-					buf, _ = bin.ReadBytes('\n') //error line
+				} else if buf[0] == fastqComment {
+					f.isFastq = true
+					lastName = string(buf[1:])
+					//and skip it
+				} else {
+					lastName = string(buf[1:])
 				}
-			} else if buf[0] == fastqComment {
-				f.isFastq = true
-				lastName = string(buf[1:])
-				//and skip it
-			} else {
-				lastName = string(buf[1:])
-			}
-			offset += int64(len(buf))
-			if err != nil {
-				break
+				offset += int64(len(buf))
+				if err != nil {
+					break
+				}
 			}
 		}
+		f.cacheFull = f.cacheFull || (f.cache && sentCount < maxSeqs) //i.e. we finished before our limit was reached
 		if !f.sendExtras(sentCount, maxSeqs, nextID, seqOut) {
 			close(seqOut)
 		}
@@ -389,4 +423,5 @@ func (f *fastaSequenceSet) Write(out io.Writer, fullNames bool) {
 	for i := 0; i < f.numWorkers; i++ {
 		<-done
 	}
+	bout.Flush()
 }
