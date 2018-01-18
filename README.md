@@ -47,9 +47,11 @@ The trim command is used to remove adapters or barcodes from the end of long rea
 
 Input reads are specified using the `-i` argument. Output reads are written to stdout and will be in the same format as the input reads.
 
-Usage example:
+Usage examples:
 
 ```downpore trim -i reads.fastq -f ./data/adapters_front.fasta -b ./data/adapters_back.fasta > trimmed.fastq```
+
+```downpore trim -i reads.fastq -f ./data/adapters_front.fasta -b ./data/adapters_back.fasta --himem true --num_workers 32 > trimmed.fastq```
 
 ## Trim overview
 The trim command uses k-mer matching and chaining to find sub-sequences of reads that match any adapter/barcode from a list provided by the user.  Adapters found in the middle of long reads cause that read to be split.
@@ -93,7 +95,7 @@ The trim command does not explicitly de-multiplex data. If this is required then
 ## Porechop performance comparison
 The main use case for the downpore trim command is for those situations in which Porechop is the bottleneck in your pipeline, or possibly when there are memory constraints. In terms of performance, downpore is I/O bound as it makes two passes through the input file, whereas Porechop is CPU bound. As such, all comparisons below are based on wall-clock time.
 
-When the `-himem` argument is set the trim uses only a single pass through the input file and this has been tested separately.
+When the `--himem` argument is set the trim uses only a single pass through the input file and this has been tested separately.
 
 ### Performance test data
 Three data sets: 
