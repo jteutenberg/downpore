@@ -108,7 +108,7 @@ Three data sets:
 Trimming was performed on a low spec 4-core machine with an SSD.
 
 Data | Speedup | Speedup (HiMem) | downpore memory | downpore (HiMem) memory | Porechop memory 
----| ---:| ---:| ---:
+---| ---:| ---:| ---:| ---:| ---:
 E.coli small | 31x | 34x | 0.3GB | 1.1GB | 1.1GB 
 E.coli small .gz | 6x | 11x | 0.3GB | 1.1GB | 1.1GB 
 E.coli | 25x | | 1.7GB | | 3.6GB 
