@@ -90,7 +90,7 @@ Adapters with names beginning "Barcode" are a special case. These take precedenc
 * `himem` whether or not to cache input reads in memory
 
 ## De-multiplexing
-The trim command does not explicitly de-multiplex data. If this is required then the barcode labels on reads can be used by an external script to partition the output.
+The trim command does not explicitly de-multiplex data. If this is required then the sequence names of the output (which include barcode labels added by downpore) can be used by an external script to partition them.
 
 ## Porechop performance comparison
 The main use case for the downpore trim command is for those situations in which Porechop is the bottleneck in your pipeline, or possibly when there are memory constraints. In terms of performance, downpore is I/O bound as it makes two passes through the input file, whereas Porechop is CPU bound. As such, all comparisons below are based on wall-clock time.
