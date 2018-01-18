@@ -113,7 +113,8 @@ E.coli small | 31x | 34x | 0.3GB | 1.1GB | 1.1GB
 E.coli small .gz | 6x | 11x | 0.3GB | 1.1GB | 1.1GB 
 E.coli | 25x | | 1.7GB | | 3.6GB 
 E.coli .gz | 11x | | 1.7GB | | 3.6GB 
-Human | 31x | | 1.3GB | | 4.3GB 
+Human | 31x | | 1.3GB | | 4.6GB 
+Human .gz | 12x | | 1.3GB | | 4.6GB 
 
 In terms of adapters found, downpore typically finds a few percent more at the edges of reads. In the test examples, Porechop also applies a back adapter (which trimmed ~3-5% of reads) that is not clearly present in the first 10k reads but was included based on its association with a front adapter.
 

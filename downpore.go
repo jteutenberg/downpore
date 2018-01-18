@@ -81,7 +81,7 @@ func printHelp(com commands.Command) {
 }
 
 func main() {
-	coms := []commands.Command{commands.NewTrimCommand()}
+	coms := []commands.Command{commands.NewVersionCommand(), commands.NewTrimCommand()}
 	if len(os.Args) == 1 {
 		fmt.Fprintln(os.Stderr, "Available commands:\n help <command> Describe the command and its arguments")
 		for _, com := range coms {
