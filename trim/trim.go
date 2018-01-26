@@ -80,12 +80,12 @@ func (t *Trimmer) setupIndex() {
 func LoadTrimmer(frontAdapters, backAdapters string, k int) *Trimmer {
 	fronts := make([]sequence.Sequence, 0, 100)
 	backs := make([]sequence.Sequence, 0, 100)
-	seqSet := sequence.NewFastaSequenceSet(frontAdapters, 0, 1, false)
+	seqSet := sequence.NewFastaSequenceSet(frontAdapters, 0, 1, false, false)
 	seqs := seqSet.GetSequences()
 	for seq := range seqs {
 		fronts = append(fronts, seq)
 	}
-	seqSet = sequence.NewFastaSequenceSet(backAdapters, 0, 1, false)
+	seqSet = sequence.NewFastaSequenceSet(backAdapters, 0, 1, false, false)
 	seqs = seqSet.GetSequences()
 	for seq := range seqs {
 		backs = append(backs, seq)
@@ -295,13 +295,13 @@ func (t *Trimmer) isNewFullMatch(kmerSet *util.IntSet, seq sequence.Sequence, th
 		if hits >= minHits {
 			//test their ordering
 			if seedSeq == nil {
-				seedSeq := t.index.NewSeedSequence(seq, 0, nil)
-				m := seedSeq.Match(adapters[i], adapter, int(minHits-1), t.k) //require the same high number of in-order matches
-				if m != nil && len(m.MatchA) >= int(minHits) {
-					identity, _ := m.GetBasesCovered(t.k)
-					if (identity*100)/adapters[i].Len() >= threshold {
-						enabled[i] = true
-					}
+				seedSeq = t.index.NewSeedSequence(seq)
+			}
+			m := seedSeq.Match(adapters[i], adapter, int(minHits-1), t.k) //require the same high number of in-order matches
+			if m != nil && len(m.MatchA) >= int(minHits) {
+				identity, _ := m.GetBasesCovered(t.k)
+				if (identity*100)/adapters[i].Len() >= threshold {
+					enabled[i] = true
 				}
 			}
 		}
@@ -322,7 +322,7 @@ func (t *Trimmer) findMatches(kmerSet *util.IntSet, seq sequence.Sequence, adapt
 		fraction := (hits * 10) / adapter.Size()
 		if fraction >= 2 || hits >= 3 { //enough matching to go to next test
 			if seedSeq == nil {
-				seedSeq = t.index.NewSeedSequence(seq, 0, nil)
+				seedSeq = t.index.NewSeedSequence(seq)
 			}
 			//have enough k-mers, check their ordering
 			m := seedSeq.Match(adapters[i], adapter, 3, t.k)
@@ -451,7 +451,7 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 			for i := edgeSize; i < seq.Len()-edgeSize-longestAdapter; i += t.chunkSize - longestAdapter { //100 is minimum non-edge sequence size, and max expected adapter size
 				if i > seq.Len()-(t.chunkSize*3)/2-edgeSize {
 					//add the entire remainder
-					seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, seq.Len()-edgeSize), 0, nil)
+					seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, seq.Len()-edgeSize))
 					t.index.AddSequence(seedSeq)
 					break
 				} else {
@@ -460,7 +460,7 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 					if endPoint >= seq.Len()-edgeSize {
 						endPoint = seq.Len() - edgeSize
 					}
-					seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, endPoint), 0, nil)
+					seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, endPoint))
 					if seedSeq.GetNumSeeds() >= minSeeds {
 						t.index.AddSequence(seedSeq)
 					}

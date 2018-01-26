@@ -2,6 +2,7 @@ package sequence
 
 import (
 	"fmt"
+	"log"
 )
 
 type Sequence interface {
@@ -10,16 +11,19 @@ type Sequence interface {
 	GetName() string
 	String() string
 	SubSequence(int, int) Sequence
-	StitchSequence(Sequence, int, int) int
+	//StitchSequence(Sequence, int, int) int
 	ReverseComplement() Sequence
 	Len() int
 	GetOffset() int
 	GetInset() int
-	Kmers(int) []uint64
-	ShortKmers(int,bool) []uint16
+	KmerAt(int, int) int
+	NextKmer(int, int, int) int
+	ShortKmers(int, bool) []uint16
 	Quality() []byte
+	SetQuality([]byte)
 	Detach() //ensure this sequence does not have slice references on shared arrays
-	getBytes() []byte
+	CountKmers(int, int, []bool) int
+	WriteSegments([]int, int, int, []bool)
 }
 
 //byteSequence uses an internal mapping of N=0, A=1, B=2, C=3, T=4 storing
@@ -33,20 +37,70 @@ type byteSequence struct {
 	name    *string
 }
 
-//packedSequence stores 4 bases per byte, trading CPU overhead for memory efficiency
+//packedSequence stores 4 bases per byte
 type packedSequence struct {
 	data     []byte
 	quality  []byte
-	finalLen int
+	id       int
+	offset   int
+	inset    int
+	name     *string
+	length   int //length of sequence in bases
+	firstLen int //number of bases in first byte
+	finalLen int //number of bases in final byte
 }
 
-func NewByteSequence(id int, seq string, name string) Sequence {
+func NewByteSequence(id int, seq string, name *string) Sequence {
 	data := make([]byte, len(seq), len(seq))
 	for i, s := range seq {
 		b := byte(s)
 		data[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
 	}
-	s := byteSequence{data: data, quality: nil, id: id, offset: 0, inset: 0, name: &name}
+	s := byteSequence{data: data, quality: nil, id: id, offset: 0, inset: 0, name: name}
+	return &s
+}
+
+func packBytes(seq []byte, data []byte)
+
+func NewPackedSequence(id int, seq string, name *string) Sequence {
+	length := len(seq) / 4
+	internalLength := length * 4
+	finalLength := len(seq) - internalLength //partial bytes at the end
+	data := make([]byte, (len(seq)+3)/4)
+	if internalLength >= 4 {
+		//log.Println(len(seq),internalLength,len(data))
+		packBytes([]byte(seq[:internalLength]), data)
+	}
+	/*index := 0
+	for i := 0; i <= len(seq)-4; i += 4 {
+		b1 := byte(seq[i])
+		b1 = ((b1 >> 1) ^ ((b1 & 4) >> 2)) & 3
+		b2 := byte(seq[i+1])
+		b2 = ((b2 >> 1) ^ ((b2 & 4) >> 2)) & 3
+		b3 := byte(seq[i+2])
+		b3 = ((b3 >> 1) ^ ((b3 & 4) >> 2)) & 3
+		b4 := byte(seq[i+3])
+		b4 = ((b4 >> 1) ^ ((b4 & 4) >> 2)) & 3
+		data[index]= (b1 << 6) | (b2 << 4) | (b3 << 2) | b4
+		index++
+	}*/
+	// and the partial one at the end (with trailing zeroes)
+	if finalLength > 0 {
+		var b byte
+		for i := finalLength; i > 0; i-- {
+			nb := byte(seq[len(seq)-i])
+			nb = ((nb >> 1) ^ ((nb & 4) >> 2)) & 3
+			b = (b << 2) | nb
+		}
+		if finalLength < 4 {
+			b = b << uint(8-finalLength*2)
+		}
+		data[len(data)-1] = b
+	}
+	s := packedSequence{data: data, quality: nil, id: id, offset: 0, inset: 0, name: name, length: len(seq), firstLen: 4, finalLen: finalLength}
+	if s.finalLen > s.length {
+		s.finalLen = s.length
+	}
 	return &s
 }
 
@@ -77,62 +131,64 @@ func NewByteSequenceFromKmers(id int, kmers []uint16, k int) Sequence {
 
 }*/
 
-func (s *byteSequence) StitchSequence(rhs Sequence, minOverlap, maxOverlap int) int {
-	if maxOverlap > s.Len() {
-		maxOverlap = s.Len()
-	}
-	if maxOverlap > rhs.Len() {
-		maxOverlap = rhs.Len()
-	}
-	//highest absolute matches
-	overlap := 0
-	count := 0.0
-	as := s.data[s.Len()-maxOverlap:]
-	bs := rhs.getBytes()[:maxOverlap]
-	for i := minOverlap; i < maxOverlap; i++ {
-		c := 0
-		for j := 0; j < i; j++ {
-			if as[maxOverlap-j-1] == bs[j] {
-				c++
-			}
-		}
-		r := float64(c) / float64(i)
-		if r > count {
-			count = r
-			overlap = i
-		}
-	}
-	//and stitch it
-	s.data = append(s.data, rhs.getBytes()[overlap:]...)
-	//add quality scores if available
-	if s.quality != nil {
-		q := rhs.Quality()
-		if q != nil {
-			s.quality = append(s.quality, q[overlap:]...)
-		}
-	}
-	return overlap
-}
-
 func (s *byteSequence) ReverseComplement() Sequence {
 	bs := make([]byte, len(s.data), len(s.data))
 	for i, b := range s.data {
 		bs[len(bs)-1-i] = b ^ 3
 	}
-	//TODO: reverse the quality
-	rc := byteSequence{data: bs, quality: nil, id: s.id, offset: s.inset, inset: s.offset, name: s.name}
+	var qs []byte
+	if s.quality != nil {
+		qs = make([]byte, len(s.quality), len(s.quality))
+		for i, q := range s.quality {
+			qs[len(qs)-1-i] = q
+		}
+	}
+	rc := byteSequence{data: bs, quality: qs, id: s.id, offset: s.inset, inset: s.offset, name: s.name}
+	return &rc
+}
+
+func (s *packedSequence) ReverseComplement() Sequence {
+	//gross reverse
+	bs := make([]byte, len(s.data), len(s.data))
+	for i, b := range s.data {
+		//byte complement
+		b = ^b
+		//and byte reverse
+		bs[len(bs)-1-i] = ((b & 3) << 6) | ((b & 12) << 2) | ((b & 48) >> 2) | ((b & 192) >> 6)
+	}
+	var qs []byte
+	if s.quality != nil {
+		qs = make([]byte, len(s.quality), len(s.quality))
+		for i, q := range s.quality {
+			// reverse for quality
+			qs[len(qs)-1-i] = q
+		}
+	}
+	rc := packedSequence{data: bs, quality: qs, id: s.id, offset: s.inset, inset: s.offset, firstLen: s.finalLen, finalLen: s.firstLen, name: s.name, length: s.length}
 	return &rc
 }
 
 func (s *byteSequence) GetID() int {
 	return s.id
 }
+func (s *packedSequence) GetID() int {
+	return s.id
+}
 
 func (s *byteSequence) setID(id int) {
 	s.id = id
 }
+func (s *packedSequence) setID(id int) {
+	s.id = id
+}
 
 func (s *byteSequence) GetName() string {
+	if s.name == nil {
+		return fmt.Sprint(s.id)
+	}
+	return *(s.name)
+}
+func (s *packedSequence) GetName() string {
 	if s.name == nil {
 		return fmt.Sprint(s.id)
 	}
@@ -154,6 +210,95 @@ func (s *byteSequence) String() string {
 	}
 	return string(buf)
 }
+func (s *packedSequence) String() string {
+	buf := make([]byte, len(s.data)*4, len(s.data)*4)
+	j := s.firstLen*2 - 2
+	var count uint
+	for _, b := range s.data[:len(s.data)-1] {
+		for j >= 0 {
+			buf[count] = (b >> uint(j)) & 3
+			count++
+			j -= 2
+		}
+		j = 6
+	}
+	b := s.data[len(s.data)-1]
+	last := 8 - s.finalLen*2
+	for j >= last {
+		buf[count] = (b >> uint(j)) & 3
+		count++
+		j -= 2
+	}
+	for i, b := range buf {
+		if b == 0 {
+			buf[i] = byte('A')
+		} else if b == 1 {
+			buf[i] = byte('C')
+		} else if b == 2 {
+			buf[i] = byte('G')
+		} else {
+			buf[i] = byte('T')
+		}
+	}
+	return string(buf[:s.length])
+}
+
+func (s *byteSequence) CountKmers(k, mask int, kmers []bool) int {
+	seed := s.KmerAt(0, k) >> 2
+	count := 0
+	for i := k - 1; i < len(s.data); i++ {
+		seed = s.NextKmer(seed, mask, i)
+		if kmers[seed] {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *byteSequence) WriteSegments(segments []int, k, mask int, seeds []bool) {
+	seed := s.KmerAt(0, k) >> 2
+	kmerIndex := 0
+	prev := 0
+	count := 0
+	for i := k - 1; i < len(s.data); i++ {
+		seed = s.NextKmer(seed, mask, i)
+		if seeds[seed] {
+			if count >= len(segments)-1 {
+				log.Fatal("over count:", count, len(segments), "not", s.CountKmers(k, mask, seeds), "mask:", mask, "\nat kmer", i-k, ":", seed)
+			}
+			segments[count] = kmerIndex - prev
+			segments[count+1] = seed
+			prev = kmerIndex + k
+			count += 2
+		}
+		kmerIndex++
+	}
+	segments[count] = len(s.data) - prev
+}
+
+func packedWriteSegments(data []byte, skipFront, skipBack, k int, seeds []bool, segments []int)
+func packedCountKmers(data []byte, skipFront, skipBack, k int, seeds []bool) int
+
+func (s *packedSequence) CountKmers(k, mask int, seeds []bool) int {
+	return packedCountKmers(s.data, 4-s.firstLen, 4-s.finalLen, k, seeds)
+}
+func (s *packedSequence) WriteSegments(segments []int, k, mask int, seeds []bool) {
+	//	temp := make([]int, len(segments)+20)
+	packedWriteSegments(s.data, 4-s.firstLen, 4-s.finalLen, k, seeds, segments)
+	/*packedWriteSegments(s.data, 4-s.firstLen, 4-s.finalLen, k, seeds, temp)
+	if temp[len(segments)] != 0 {
+		bs := NewByteSequence(0,s.String(),nil)
+		log.Println("Count:",s.CountKmers(k,mask,seeds))
+		log.Println("Byte count",bs.CountKmers(k,mask,seeds))
+		log.Println("Segment overflow!\n",temp)
+		log.Println(s.String(),"...")
+		t2 := make([]int, len(temp))
+		log.Println("Byte count",bs.CountKmers(k,mask,seeds))
+		log.Println("count",s.CountKmers(k,mask,seeds))
+		bs.WriteSegments(t2,k, mask,seeds)
+		log.Fatal("segs:",t2)
+	}*/
+}
 
 func (s *byteSequence) SubSequence(start, end int) Sequence {
 	if end > len(s.data) {
@@ -162,6 +307,25 @@ func (s *byteSequence) SubSequence(start, end int) Sequence {
 	ss := byteSequence{data: s.data[start:end], id: s.id, offset: s.offset + start, inset: s.inset + len(s.data) - end, name: s.name}
 	if s.quality != nil {
 		ss.quality = s.quality[start:end]
+	}
+	return &ss
+}
+
+func (s *packedSequence) SubSequence(start, end int) Sequence {
+	if end > s.length {
+		end = s.length
+	}
+	end--                         //make this inclusive
+	off := start + 4 - s.firstLen //offset in bases
+	offByte := off / 4            //offset index
+	off -= offByte * 4            //remainder offset in first byte
+	in := end + 4 - s.firstLen    //offset to the final base
+	inByte := in / 4
+	in -= inByte * 4
+	data := s.data[offByte : inByte+1]
+	ss := packedSequence{data: data, id: s.id, offset: s.offset + start, inset: s.inset + s.length - end, name: s.name, firstLen: 4 - off, finalLen: in + 1, length: end - start + 1}
+	if s.quality != nil {
+		ss.quality = s.quality[start : end+1]
 	}
 	return &ss
 }
@@ -177,40 +341,67 @@ func (s *byteSequence) Detach() {
 	}
 }
 
+func (s *packedSequence) Detach() {
+	newData := make([]byte, len(s.data), len(s.data))
+	copy(newData, s.data)
+	s.data = newData
+	if s.quality != nil {
+		newQuality := make([]byte, len(s.quality), len(s.quality))
+		copy(newData, s.quality)
+		s.quality = newQuality
+	}
+}
+
 func (s *byteSequence) Len() int {
 	return len(s.data)
+}
+func (s *packedSequence) Len() int {
+	return s.length
 }
 
 func (s *byteSequence) GetOffset() int {
 	return s.offset
 }
+func (s *packedSequence) GetOffset() int {
+	return s.offset
+}
+
 func (s *byteSequence) GetInset() int {
 	return s.inset
 }
+func (s *packedSequence) GetInset() int {
+	return s.inset
+}
 
-func (s *byteSequence) Kmers(k int) []uint64 {
-	length := len(s.data) - k + 1
-	kmers := make([]uint64, length, length)
+func (s *byteSequence) KmerAt(index, k int) int {
+	var v int
+	for i := index; i < index+k; i++ {
+		v = (v << 2) | int(s.data[i])
+	}
+	return v
+}
 
-	var mask uint64
-	var v uint64
-	for i := 0; i < k; i++ {
-		mask = (mask << 2) | 3
-		v = (v << 2) | uint64(s.data[i])
-	}
-	for i := k; i < len(s.data); i++ {
-		//store and shift
-		kmers[i-k] = v
-		v = ((v << 2) | uint64(s.data[i])) & mask
-	}
-	kmers[length-1] = v
-	return kmers
+func packedKmerAt(data []byte, offset, k int) int32
+
+func (s *packedSequence) KmerAt(index, k int) int {
+	return int(packedKmerAt(s.data, index+4-s.firstLen, k))
+}
+
+func (s *byteSequence) NextKmer(current, mask int, nextBaseIndex int) int {
+	return ((current << 2) | int(s.data[nextBaseIndex])) & mask
+}
+func (s *packedSequence) NextKmer(current, mask int, nextBaseIndex int) int {
+	nextBaseIndex += 4 - s.firstLen
+	b := s.data[nextBaseIndex/4]
+	subIndex := uint(3-(nextBaseIndex&3)) << 1 //in bits
+	b = (b >> subIndex) & 3
+	return ((current << 2) | int(b)) & mask
 }
 
 //ShortKmers produces a list of kmers (up to 8-mers in length), collapsing homopolymers if required
 func (s *byteSequence) ShortKmers(k int, collapse bool) []uint16 {
 	length := len(s.data) - k + 1
-	kmers := make([]uint16, length, length)
+	kmers := make([]uint16, length)
 
 	var mask uint16
 	var v uint16
@@ -234,12 +425,52 @@ func (s *byteSequence) ShortKmers(k int, collapse bool) []uint16 {
 	return kmers[:index]
 }
 
+func (s *packedSequence) ShortKmers(k int, collapse bool) []uint16 {
+	length := s.length - k + 1
+	kmers := make([]uint16, length)
+	v := s.KmerAt(0, k)
+	var mask int
+	for i := 0; i < k; i++ {
+		mask = (mask << 2) | 3
+	}
+	var prev int
+	index := 0
+	for i := k; i < s.length; i++ {
+		if !collapse || v != prev || index == 0 {
+			//store and shift
+			kmers[index] = uint16(v)
+			prev = v
+			index++
+		}
+		v = s.NextKmer(v, mask, i)
+	}
+	kmers[index] = uint16(v)
+	index++
+	return kmers[:index]
+}
+
 func (s *byteSequence) Quality() []byte {
 	return s.quality
 }
+func (s *packedSequence) Quality() []byte {
+	return s.quality
+}
 
-func (s *byteSequence) getBytes() []byte {
-	return s.data
+func (s *byteSequence) SetQuality(q []byte) {
+	s.quality = q
+}
+func (s *packedSequence) SetQuality(q []byte) {
+	s.quality = q
+}
+
+func KmerValue(s string) int {
+	value := 0
+	for _, c := range s {
+		b := byte(c)
+		d := ((b >> 1) ^ ((b & 4) >> 2)) & 3
+		value = (value << 2) | int(d)
+	}
+	return value
 }
 
 func KmerString(value int, k int) string {

@@ -32,7 +32,7 @@ func (com *trimCommand) GetArgs() (map[string]string, map[string]string, map[str
 func (com *trimCommand) Run(args map[string]string) {
 	numWorkers := ParseInt(args["num_workers"])
 	trimmer := trim.LoadTrimmer(args["front_adapters"], args["back_adapters"], ParseInt(args["k"]))
-	seqSet := sequence.NewFastaSequenceSet(args["input"], 50, numWorkers, ParseBool(args["himem"]))
+	seqSet := sequence.NewFastaSequenceSet(args["input"], 50, numWorkers, ParseBool(args["himem"]), false)
 	trimmer.SetVerbosity(ParseInt(args["verbosity"]))
 	trimmer.DetermineAdapters(seqSet, ParseInt(args["check_reads"]), ParseInt(args["adapter_threshold"]), numWorkers)
 	trimmer.SetTrimParams(ParseInt(args["middle_threshold"]), ParseInt(args["extra_end_trim"]), ParseInt(args["extra_middle_trim"]), ParseInt(args["chunk_size"]), !ParseBool(args["discard_middle"]), ParseBool(args["tag_adapters"]))

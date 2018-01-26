@@ -36,27 +36,28 @@ type SequenceSet interface {
 }
 
 type fastaSequenceSet struct {
-	filename   string
-	offsets    []int64 //byte offset to start of each sequence, including the frontTrim
-	ignore     []bool
-	frontTrim  []int
-	backTrim   []int
-	lengths    []int
-	bases      int64
-	names      []string
-	cached     []Sequence
-	minLen     int
-	isFastq    bool //whether quality scores are available or not
-	size       int
-	extras     []Sequence
-	extraNames []string
-	numWorkers int
-	cache      bool //whether or not to cache sequences in memory
-	cacheFull  bool //whether the whole input file has been cached
+	filename      string
+	offsets       []int64 //byte offset to start of each sequence, including the frontTrim
+	ignore        []bool
+	frontTrim     []int
+	backTrim      []int
+	lengths       []int
+	bases         int64
+	names         []string
+	cached        []Sequence
+	minLen        int
+	isFastq       bool //whether quality scores are available or not
+	size          int
+	extras        []Sequence
+	extraNames    []string
+	numWorkers    int
+	cache         bool //whether or not to cache sequences in memory
+	cacheFull     bool //whether the whole input file has been cached
+	ignoreQuality bool
 }
 
-func NewFastaSequenceSet(filename string, minLength int, numWorkers int, cache bool) SequenceSet {
-	f := fastaSequenceSet{filename: filename, offsets: make([]int64, 0, 500000), ignore: make([]bool, 0, 500000), frontTrim: make([]int, 0, 500000), backTrim: make([]int, 0, 500000), lengths: make([]int, 0, 500000), bases: 0, names: make([]string, 0, 500000), minLen: minLength, isFastq: false, extras: make([]Sequence, 0, 20), extraNames: make([]string, 0, 20), numWorkers: numWorkers, cache: cache}
+func NewFastaSequenceSet(filename string, minLength int, numWorkers int, cache bool, ignoreQuality bool) SequenceSet {
+	f := fastaSequenceSet{filename: filename, offsets: make([]int64, 0, 500000), ignore: make([]bool, 0, 500000), frontTrim: make([]int, 0, 500000), backTrim: make([]int, 0, 500000), lengths: make([]int, 0, 500000), bases: 0, names: make([]string, 0, 500000), minLen: minLength, isFastq: false, extras: make([]Sequence, 0, 20), extraNames: make([]string, 0, 20), numWorkers: numWorkers, cache: cache, ignoreQuality: ignoreQuality}
 	if cache {
 		f.cached = make([]Sequence, 0, 500000)
 	}
@@ -137,12 +138,7 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 				buf = make([]byte, f.lengths[nextID]+10000, f.lengths[nextID]+10000)
 			}
 			if n, _ := io.ReadFull(in, buf[:f.lengths[nextID]]); n == f.lengths[nextID] {
-				//transform into 0-4 values. A=65, C=67, G=71, T=84
-				data := make([]byte, n, n)
-				for i, b := range buf[:n] {
-					data[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
-				}
-				seq := byteSequence{data: data, id: nextID, name: &(f.names[nextID])}
+				seq := NewPackedSequence(nextID, string(buf[:n]), &(f.names[nextID]))
 				offset += int64(n)
 				if f.isFastq { //get corresponding quality data
 					quality := make([]byte, n, n)
@@ -153,10 +149,12 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 						break
 					}
 					if m, _ := io.ReadFull(in, quality); m == n {
-						for i, b := range quality {
-							quality[i] = b - 33
+						if !f.ignoreQuality {
+							for i, b := range quality {
+								quality[i] = b - 33
+							}
+							seq.SetQuality(quality)
 						}
-						seq.quality = quality
 						offset += int64(m)
 					} else {
 						log.Println("Unexpected quality line size", m, "not matching expected", f.lengths[nextID], "in", f.names[nextID])
@@ -164,7 +162,7 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 					}
 				}
 				sentCount++
-				seqOut <- &seq
+				seqOut <- seq
 			} else {
 				log.Println("Unexpected read size", n, "not matching expected", f.lengths[nextID])
 				break //hit the end?
@@ -201,11 +199,7 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 						f.lengths = append(f.lengths, len(buf)-1)
 						f.names = append(f.names, strings.Fields(lastName)[0])
 						f.size++
-						//transform into 0-4 values. A=65, C=67, G=71, T=84
-						for i, b := range buf {
-							buf[i] = ((b >> 1) ^ ((b & 4) >> 2)) & 3
-						}
-						seq := byteSequence{data: buf[:len(buf)-1], id: nextID, name: &(f.names[len(f.names)-1])}
+						seq := NewPackedSequence(nextID, string(buf[:len(buf)-1]), &(f.names[len(f.names)-1]))
 						f.bases += int64(len(buf) - 1)
 						nextID++
 						//if fastq, read error line
@@ -217,18 +211,20 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 							}
 							offset += int64(len(buf))
 							buf, _ = bin.ReadBytes('\n') //error line
-							if len(buf) == len(seq.data)+1 {
-								for i, b := range buf {
-									buf[i] = b - 33
+							if !f.ignoreQuality {
+								if len(buf) == seq.Len()+1 {
+									for i, b := range buf {
+										buf[i] = b - 33
+									}
+									seq.SetQuality(buf[:len(buf)-1])
 								}
-								seq.quality = buf[:len(buf)-1]
 							}
 						}
 						sentCount++
 						if f.cache {
-							f.cached = append(f.cached, &seq)
+							f.cached = append(f.cached, seq)
 						}
-						seqOut <- &seq
+						seqOut <- seq
 					} else if f.isFastq { //manual skip
 						//manually skip error line
 						offset += int64(len(buf)) //the sequence
