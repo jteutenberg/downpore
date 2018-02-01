@@ -6,7 +6,6 @@ import (
 	"github.com/jteutenberg/downpore/util"
 	"math"
 	"sync"
-	//"log"
 )
 
 //SeedIndex is a set of reads in gapped-seed format ready for querying
@@ -188,7 +187,6 @@ func (g *SeedIndex) AddSequence(seq *SeedSequence) {
 					g.size++
 				}
 			}
-			//log.Println(index,"to set",seed,"=",g.sequenceSets[seed])
 			g.sequenceSets[seed].Add(index)
 		}
 	}

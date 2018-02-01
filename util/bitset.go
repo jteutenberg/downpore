@@ -22,15 +22,33 @@ func NewIntSet() *IntSet {
 	return &set
 }
 
+func NewIntSetCapacity(capacity int) *IntSet {
+	set := IntSet{make([]uint64, 0, capacity/64+1), 1, 0, 0}
+	return &set
+}
+
 func NewIntSetFromInts(values []int) *IntSet {
-	set := IntSet{make([]uint64, 0, 50), 1, 0, 0}
+	var max int
+	for _, v := range values {
+		if v > max {
+			max = v
+		}
+	}
+	set := IntSet{make([]uint64, 0, max/64+1), 1, 0, 0}
 	s := &set
 	s.AddInts(values)
 	return s
 }
 
 func NewIntSetFromUInts(values []uint) *IntSet {
-	set := IntSet{make([]uint64, 0, 50), 1, 0, 0}
+	var max uint
+	for _, v := range values {
+		if v > max {
+			max = v
+		}
+	}
+
+	set := IntSet{make([]uint64, 0, max/64+1), 1, 0, 0}
 	s := &set
 	for _, v := range values {
 		s.Add(v)

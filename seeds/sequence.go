@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
+	"log"
 	"sort"
 )
 
@@ -50,7 +51,6 @@ func (s *SeedSequence) Trimmed(startOffset, startSeed, endOffset, endSeed, k int
 	//and step forward over seeds at the end too
 	numSeeds := len(s.segments) / 2
 	for endSeed < numSeeds-1 && endOffset >= s.segments[endSeed*2+2]+k {
-		//fmt.Println("shifting end up from ",endSeed," because offset ",endOffset," > ",s.segments[endSeed*2+2])
 		endOffset -= s.segments[endSeed*2+2] + k
 		endSeed++
 	}
@@ -166,7 +166,7 @@ func (a *SeedSequence) MatchFrom(b *SeedSequence, startA int, startB int, offset
 	offsetB := -offset //original offset is now applied. Ignore from here on in.
 	offsetA := 0
 	for i := startA*2 + 1; i < len(a.segments); i += 2 {
-		nextBOffset := offsetB
+		//if whitelist.Contains(uint(a.segments[i])) {
 		//determine the limits of how far away the next seed match could be
 		minOffset := int(minOffsetRatio * float64(offsetA))
 		if minOffset < 0 {
@@ -176,6 +176,12 @@ func (a *SeedSequence) MatchFrom(b *SeedSequence, startA int, startB int, offset
 		if maxOffset < k {
 			maxOffset = k //close enough to ignore the gap ratio
 		}
+		//walk up to the permitted offsets (if not there already)
+		for offsetB < minOffset && minBIndex < len(b.segments)-1 {
+			offsetB += b.segments[minBIndex+1] + k
+			minBIndex += 2
+		}
+		nextBOffset := offsetB
 		for j := minBIndex; j < len(b.segments) && j <= maxBIndex; j += 2 {
 			if b.segments[j] == a.segments[i] {
 				//exact match. TODO: find exact match with best distance? Dynamic programming instead?
@@ -198,6 +204,7 @@ func (a *SeedSequence) MatchFrom(b *SeedSequence, startA int, startB int, offset
 				break
 			}
 		}
+		//}
 		offsetA += a.segments[i-1] + k
 	}
 	//TODO: skipped count
@@ -233,7 +240,7 @@ func (a *SeedSequence) MatchTo(b *SeedSequence, startA int, startB int, offset i
 	//Note: offset gives how far back in the sequence we are looking
 	for i := startA*2 - 1; i >= 0; i -= 2 {
 		offsetA += a.segments[i+1] + k //the offset to the seed at i
-		nextBOffset := offsetB
+		//if whitelist.Contains(uint(a.segments[i])) {
 		//determine the limits of how far away the next seed match could be
 		minOffset := int(minOffsetRatio * float64(offsetA))
 		if minOffset < 0 {
@@ -243,6 +250,12 @@ func (a *SeedSequence) MatchTo(b *SeedSequence, startA int, startB int, offset i
 		if maxOffset < k {
 			maxOffset = k //close enough to ignore the gap ratio
 		}
+		//walk up to the permitted offsets (if not there already)
+		for offsetB < minOffset && maxBIndex > 0 {
+			offsetB += b.segments[maxBIndex-1] + k
+			maxBIndex -= 2
+		}
+		nextBOffset := offsetB
 		for j := maxBIndex; j >= 0; j -= 2 {
 			if b.segments[j] == a.segments[i] {
 				//exact match
@@ -267,6 +280,7 @@ func (a *SeedSequence) MatchTo(b *SeedSequence, startA int, startB int, offset i
 				break
 			}
 		}
+		//}
 	}
 	if len(matchA) == 0 {
 		m.MatchA = matchA
@@ -390,7 +404,7 @@ func printClusters(cs []*cluster, width int) {
 	anchorBases := make([]int, len(cs), len(cs))
 	for i, c := range cs {
 		if c.targetAnchor >= c.target.GetNumSeeds() {
-			fmt.Println("ERROR in cluster", i, ": anchor at ", c.targetAnchor, "/", c.target.GetNumSeeds())
+			log.Println("ERROR in cluster", i, ": anchor at ", c.targetAnchor, "/", c.target.GetNumSeeds())
 		}
 		anchorBases[i] = c.target.GetSeedOffset(c.targetAnchor, k)
 		if anchorBases[i] > maxLeft {
@@ -592,8 +606,6 @@ func (c *cluster) rationalise(k int, keepEdges bool) {
 		}
 		a.MatchA = a.MatchA[:index]
 		a.MatchB = a.MatchB[:index]
-		//fmt.Println("After:",a.MatchA)
-		//a.Validate()
 	}
 }
 
@@ -619,9 +631,9 @@ func (m *SeedMatch) ReverseComplement(k int) {
 func (m *SeedMatch) Validate() bool {
 	for i := 0; i < len(m.MatchA); i++ {
 		if m.SeqA.segments[m.MatchA[i]*2+1] != m.SeqB.segments[m.MatchB[i]*2+1] {
-			fmt.Println("Invalid alignment at index ", i, ": ", m.SeqA.segments[m.MatchA[i]*2+1], m.SeqB.segments[m.MatchB[i]*2+1])
-			fmt.Println(m.MatchA, "\n", m.MatchB)
-			fmt.Println(m.SeqA, "\n", m.SeqB)
+			log.Println("Invalid alignment at index ", i, ": ", m.SeqA.segments[m.MatchA[i]*2+1], m.SeqB.segments[m.MatchB[i]*2+1])
+			log.Println(m.MatchA, "\n", m.MatchB)
+			log.Println(m.SeqA, "\n", m.SeqB)
 			return false
 		}
 	}
@@ -731,13 +743,16 @@ func (s *seqSorter) Swap(i, j int) {
 }
 
 func Consensus(seqs []*SeedSequence, badness []int, anchors, anchorOffsets []int, k int) []*SeedMatch {
-	//1. sort by quality
+	//1. sort by quality (seeds matching original query)
 	sorter := &seqSorter{seqs: seqs, others: [][]int{anchors, anchorOffsets}, value: badness}
 	sort.Sort(sorter)
+
+	minMatchLength := 5
 
 	//2. combine
 	retry := make([]int, 0, len(seqs)) //early failures can be retried once later
 	c := makeCluster(seqs[0], anchors[0], anchorOffsets[0], len(seqs))
+	//NOTE: every 5 sequences, seeds with only 1 supporting sequence are removed. I.e. approx 20% support expected.
 	for i := 1; i < len(seqs); i++ {
 		mf := c.target.MatchFrom(seqs[i], c.targetAnchor, anchors[i], anchorOffsets[i]-c.targetAnchorOffset, k)
 		//back match
@@ -747,14 +762,13 @@ func Consensus(seqs []*SeedSequence, badness []int, anchors, anchorOffsets []int
 		} else { //use a shared seed as the anchor
 			mb = c.target.MatchTo(seqs[i], mf.MatchA[0], mf.MatchB[0], 0, k)
 		}
-		if len(mb.MatchA)+len(mf.MatchA) > 5 { //how to pick a threshold for "good enough" match?
+		if len(mb.MatchA)+len(mf.MatchA) > minMatchLength { //how to pick a threshold for "good enough" match?
 			m := SeedMatch{SeqA: mb.SeqA, SeqB: seqs[i]}
 			//create the full length match
 			m.MatchA = append(mb.MatchA, mf.MatchA...)
 			m.MatchB = append(mb.MatchB, mf.MatchB...)
 			//then generate the merged consensus seed sequence
 			c.addSequence(&m, k)
-			//fmt.Println("After adding",i,"(length",m.SeqB.Len(),") length is",c.target.GetSeedOffset(c.target.GetNumSeeds(),k))
 			if len(c.components)%5 == 0 { //TODO: more things to test here: number of 2+ seeds
 				c.rationalise(k, false)
 			}
@@ -770,7 +784,7 @@ func Consensus(seqs []*SeedSequence, badness []int, anchors, anchorOffsets []int
 			continue
 		}
 		mb = c.target.MatchTo(seqs[i], mf.MatchA[0], mf.MatchB[0], 0, k)
-		if len(mf.MatchA)+len(mb.MatchA) > 5 {
+		if len(mf.MatchA)+len(mb.MatchA) > minMatchLength {
 			m := SeedMatch{SeqA: mb.SeqA, SeqB: seqs[i]}
 			m.MatchA = append(mb.MatchA, mf.MatchA...)
 			m.MatchB = append(mb.MatchB, mf.MatchB...)
@@ -789,204 +803,45 @@ func Consensus(seqs []*SeedSequence, badness []int, anchors, anchorOffsets []int
 	if len(c.components)%5 != 0 {
 		c.rationalise(k, true)
 	}
+
+	totalSupport := 0 //total appearances of the consensus seeds = reads*hits
+	for _, s := range c.support {
+		totalSupport += s
+	}
+	requiredSupport := (totalSupport * 5) / len(c.support) //5 seeds with average (mean) support
 	for j, s := range c.components {
 		//pick a seed as anchor
 		anchorA := c.alignments[j].MatchA[len(c.alignments[j].MatchA)/2]
 		anchorB := c.alignments[j].MatchB[len(c.alignments[j].MatchB)/2]
 		mf := c.target.MatchFrom(s, anchorA, anchorB, 0, k)
-		mb := c.target.MatchTo(s, mf.MatchA[0], mf.MatchB[0], 0, k)
-		//matchLen := len(mf.MatchA) + len(mb.MatchA)
-		//fmt.Println("Original match ",len(c.alignments[j].MatchA),"final match",matchLen)
-		m := SeedMatch{SeqA: c.target, SeqB: s, MatchA: append(mb.MatchA, mf.MatchA...), MatchB: append(mb.MatchB, mf.MatchB...)}
-		result = append(result, &m)
-		//fmt.Println(i,": seq",s.id,":",m.LongString(k))
+		if len(mf.MatchA) > 0 {
+			mb := c.target.MatchTo(s, mf.MatchA[0], mf.MatchB[0], 0, k)
+			if len(mb.MatchA)+len(mf.MatchA) > minMatchLength {
+				m := SeedMatch{SeqA: c.target, SeqB: s, MatchA: append(mb.MatchA, mf.MatchA...), MatchB: append(mb.MatchB, mf.MatchB...)}
+				support := 0
+				for _, n := range m.MatchA {
+					support += c.support[n]
+				}
+				if support >= requiredSupport {
+					result = append(result, &m)
+				}
+			}
+		}
 	}
+	/*if debug {
+		for _, r := range result {
+			support := 0
+			for _, n := range r.MatchA {
+				support += c.support[n]
+			}
+			log.Println(r.SeqB.GetName(),support,"\n",r.LongString(k))
+		}
+	}*/
 	//update the length of the consensus
 	if len(result) > 0 {
 		result[0].SeqA.length = result[0].SeqA.GetSeedOffset(result[0].SeqA.GetNumSeeds(), k)
 	}
 	return result
-}
-
-//Cluster performs all-vs-all alignment between the arguments.
-//All start/end offsets are relative
-func Cluster(leftBases, rightBases int, seqs []*SeedSequence, anchors, anchorOffsets []int, k int) ([][]*SeedMatch, []int) {
-	clusters := make([]*cluster, 0, 5)
-	// 1. Find approximate start and end orderings (by bases) of each sequence
-	sorter := &seqSorter{seqs: seqs, others: [][]int{anchors, anchorOffsets}, value: make([]int, len(seqs), len(seqs))}
-	sorter.setStarts(anchors, anchorOffsets, k)
-	sort.Sort(sorter)
-	startPos := make([]int, len(seqs), len(seqs))
-	for i, _ := range seqs {
-		startPos[i] = i
-	}
-	sorter.others = append(sorter.others, startPos)
-	sorter.setEnds(anchors, anchorOffsets, k)
-	sort.Sort(sorter)
-	for i, _ := range seqs {
-		sorter.value[i] = -(sorter.others[len(sorter.others)-1][i] + i)
-	}
-	sort.Sort(sorter) //sorted by "fewest starting before + ending after"
-	// 2. Pick the single sequence with minimum start + end offsets (by position in ordering, not base)
-	// TODO: 3. Sort remaining sequences by % overlap with chosen one. I.e begin with wholly contained sequences. Break ties by largest first.
-
-	// 4. Perform clustering
-	triedRecombine := false
-	count := 0
-	for i := 0; i < len(seqs); i++ {
-		if len(clusters) >= 10 {
-			if !triedRecombine {
-				triedRecombine = true
-				clusters = combineClusters(clusters, seqs, anchors, anchorOffsets, k)
-			}
-		}
-		unmatched := true
-		for _, c := range clusters {
-			//forward match
-			count++
-			mf := c.target.MatchFrom(seqs[i], c.targetAnchor, anchors[i], anchorOffsets[i]-c.targetAnchorOffset, k)
-			//back match
-			var mb *SeedMatch
-			if len(mf.MatchA) == 0 {
-				mb = c.target.MatchTo(seqs[i], c.targetAnchor, anchors[i], anchorOffsets[i]-c.targetAnchorOffset, k)
-			} else { //use a shared seed as the anchor
-				mb = c.target.MatchTo(seqs[i], mf.MatchA[0], mf.MatchB[0], 0, k)
-			}
-			m := SeedMatch{SeqA: mb.SeqA, SeqB: seqs[i]}
-			//create the full length match
-			m.MatchA = append(mb.MatchA, mf.MatchA...)
-			m.MatchB = append(mb.MatchB, mf.MatchB...)
-			if isFullMatch(&m) { //if one of this and the consensus matches to the left, and one to the right
-				unmatched = false
-				//then generate the merged consensus seed sequence
-				c.addSequence(&m, k)
-				if len(c.components)%5 == 0 {
-					c.rationalise(k, true)
-				}
-			}
-		}
-		//if no best match, make a new cluster
-		if unmatched && len(clusters) < 10 {
-			clusters = append(clusters, makeCluster(seqs[i], anchors[i], anchorOffsets[i], len(seqs)-i))
-		}
-	}
-	if len(seqs) > 200 {
-		fmt.Println(len(seqs), "sequences made", len(clusters), "clusters using", count, "matchings.")
-	}
-	clusters = combineClusters(clusters, seqs, anchors, anchorOffsets, k)
-	//printClusters(clusters, 100)
-
-	result := make([][]*SeedMatch, 0, len(clusters))
-	offsets := make([]int, 0, len(clusters)) //final anchor offsets (in bases)
-	for _, c := range clusters {
-		//fmt.Println(i,"is distinct:",c.isDistinct(clusters))
-		if len(c.components) == 1 || !c.isDistinct(clusters) {
-			continue
-		}
-		//realign each component of a good cluster against its consensus.
-		ms := make([]*SeedMatch, 0, len(c.components))
-		for j, s := range c.components {
-			//pick a seed as anchor
-			anchorA := c.alignments[j].MatchA[len(c.alignments[j].MatchA)/2]
-			anchorB := c.alignments[j].MatchB[len(c.alignments[j].MatchB)/2]
-			//fmt.Println("Match from anchors ",anchorA,"and",anchorB)
-			mf := c.target.MatchFrom(s, anchorA, anchorB, 0, k)
-			mb := c.target.MatchTo(s, mf.MatchA[0], mf.MatchB[0], 0, k)
-			//matchLen := len(mf.MatchA) + len(mb.MatchA)
-			//fmt.Println("Original match ",len(c.alignments[j].MatchA),"final match",matchLen)
-			m := SeedMatch{SeqA: c.target, SeqB: s, MatchA: append(mb.MatchA, mf.MatchA...), MatchB: append(mb.MatchB, mf.MatchB...)}
-			ms = append(ms, &m)
-		}
-		//find the length of the consensus now
-		offset := c.target.GetSeedOffset(c.targetAnchor, k)
-		c.target.length = c.target.GetSeedOffsetFromEnd(c.targetAnchor, k) + offset + k
-		result = append(result, ms)
-		offsets = append(offsets, offset)
-	}
-	return result, offsets
-}
-
-func combineClusters(clusters []*cluster, seqs []*SeedSequence, anchors, anchorOffsets []int, k int) []*cluster {
-	for i := 0; i < len(clusters); i++ {
-		c := clusters[i]
-		if len(c.components) > 1 {
-			c.rationalise(k, false)
-		}
-		//fmt.Println("cluster",i,"has",len(c.target.segments)/2,"seeds from",len(c.components),"sequences.")
-		//re-align against earlier clusters.. just in case
-		for j := 0; j < i; j++ {
-			if len(clusters[j].components) == 1 && len(c.components) == 1 { //this will have been tested on cluster creation
-				continue
-			}
-			//fmt.Println("Comparing against cluster",j,"with anchors",clusters[j].targetAnchor,"and",c.targetAnchor,"out of",len(clusters[j].target.segments)/2,",",len(c.target.segments)/2)
-			mf := c.target.MatchFrom(clusters[j].target, c.targetAnchor, clusters[j].targetAnchor, clusters[j].targetAnchorOffset-c.targetAnchorOffset, k)
-			mb := c.target.MatchTo(clusters[j].target, c.targetAnchor, clusters[j].targetAnchor, clusters[j].targetAnchorOffset-c.targetAnchorOffset, k)
-			m := SeedMatch{SeqA: c.target, SeqB: clusters[j].target}
-			//create the full length match
-			m.MatchA = append(mb.MatchA, mf.MatchA...)
-			m.MatchB = append(mb.MatchB, mf.MatchB...)
-			//fmt.Println("Clusters",i,j,"match",len(mf.MatchA),"+", len(mb.MatchA),"against",len(clusters[j].target.segments)/2,"seeds (with",len(c.target.segments)/2,"seeds), from",len(clusters[j].components),"sequences (with my",len(c.components),"sequences). Full = ",isFullMatch(&m), "using anchor",clusters[j].targetAnchor,c.targetAnchor)
-			//fmt.Println(m.MatchA)
-			//fmt.Println(m.MatchB)
-			if isFullMatch(&m) {
-				//TODO: merge the shorter one into the larger one
-				//printClusters([]*cluster{clusters[j],c},100)
-				//each un-shared sequence to the earlier cluster, one by one
-				for _, seq := range c.components {
-					//check it is not contained in clusters[j] already
-					found := false
-					for _, otherSeq := range clusters[j].components {
-						if otherSeq == seq {
-							found = true
-							break
-						}
-					}
-					if found {
-						continue
-					}
-					//find a seed shared by the between-consenus alignment and this sequence's alignment to its consensus
-					mOffset := 0
-					matchedSeedIndex := 0
-					targetSeedIndex := clusters[j].targetAnchor
-					tOffset := clusters[j].targetAnchorOffset
-					for n, s := range seqs {
-						if s == seq {
-							matchedSeedIndex = anchors[n]
-							mOffset = anchorOffsets[n]
-							break
-						}
-					}
-					//fmt.Println("Final chosen seeds are:",targetSeedIndex,",",matchedSeedIndex," = ",clusters[j].target.segments[targetSeedIndex*2+1],",",seq.segments[matchedSeedIndex*2+1],"from segments length: ",len(clusters[j].target.segments)/2,",",len(seq.segments)/2)
-					mf = clusters[j].target.MatchFrom(seq, targetSeedIndex, matchedSeedIndex, mOffset-tOffset, k)
-					if len(mf.MatchA) == 0 {
-						//fmt.Println("Match from anchors failed.")
-						continue
-					}
-					//fmt.Println("Match from the seeds: len ",len(mf.MatchA))
-					mb = clusters[j].target.MatchTo(seq, mf.MatchA[0], mf.MatchB[0], 0, k)
-					newM := SeedMatch{SeqA: clusters[j].target, SeqB: seq}
-					//create the full length match
-					newM.MatchA = append(mb.MatchA, mf.MatchA...)
-					newM.MatchB = append(mb.MatchB, mf.MatchB...)
-					// any sequences that fail get discarded (should be rare)
-					if isFullMatch(&newM) {
-						//fmt.Println("Seq",n,"matched and merged in.")
-						//then generate the merged consensus seed sequence
-						clusters[j].addSequence(&newM, k)
-						if len(c.components)%5 == 0 {
-							c.rationalise(k, true)
-						}
-					}
-				}
-				// 3. remove this cluster from the list
-				clusters[i] = clusters[len(clusters)-1]
-				clusters = clusters[:len(clusters)-1]
-				i--
-				break
-			}
-		}
-	}
-	return clusters
 }
 
 //Merge will combine two seed sequences with the given alignment, maintaining all seeds
@@ -1066,8 +921,6 @@ func (m *SeedMatch) Merge(k int, bWeight float64) (*SeedSequence, []int) {
 		if offsetB >= k {
 			offsetB = int(float64(sb[j+1])*bFactor + 0.5) //weighted offset in bases
 		}
-		//fmt.Println("lengths to next match are",aLength,bLength,"merging with weights",aFactor,bFactor,"=",aFactor+bFactor,"from weighting towards",bWeight)
-		//fmt.Println("weighted offsets to next seed are",offsetA,offsetB,"from",sa[i+1],sb[j+1])
 		i += 2
 		j += 2
 		lastOffset := offsetA
@@ -1126,14 +979,6 @@ func (m *SeedMatch) Merge(k int, bWeight float64) (*SeedSequence, []int) {
 	//add the final offset (zero it)
 	maxSeg = append(maxSeg, 0)
 
-	/*assert:
-	for i := 0; i < len(newAIndices); i++ {
-		ind := i*2+1
-		newIndex := newAIndices[i]*2+1
-		if sa[ind] != maxSeg[newIndex] {
-			fmt.Println("BAD REINDEX AT ",i,"/",newAIndices[i],"\n",sa,"\nand\n",sb,"\n",maxSeg,"\nmap is",newAIndices)
-		}
-	}*/
 	//TODO: length: calculate from the segments
 	//id should be a new consensus id? To be set later
 	s := SeedSequence{segments: maxSeg, length: 0, id: -1, offset: 0, rc: false}
@@ -1146,24 +991,19 @@ func (m *SeedMatch) Merge(k int, bWeight float64) (*SeedSequence, []int) {
 //The base offset includes k bases for the returned seed's length
 //distance is the distance in bases of sequence b from the last matching seed
 func (m *SeedMatch) GetBaseIndex(aIndex int, k int) (index int, bases int, distance int) {
-	//fmt.Println("Searching for",aIndex,"seed for its equivalen position in B, k=",k)
 	//find the before and after seed matches..
 	before := 0
 	for before < len(m.MatchA) && m.MatchA[before] <= aIndex {
 		before++
 	}
-	//fmt.Println("First matching seed before it in A is",before," (0= no match before, 1=exact match)")
 	if before == 0 {
-		//fmt.Println("Prior to first matching seed.")
 		//special case: looking for a spot before the first matching seed
 		offset := 0
 		for i := m.MatchA[0]; i > aIndex; i-- {
 			offset += m.SeqA.segments[i*2] + k
 		}
-		//fmt.Println("Got",offset,"bases between beginnings of",m.MatchA[0],"and",aIndex,"in A")
 		//offset bases before index A. Count back from the first match
 		bIndex := m.MatchB[0]
-		//fmt.Println("Looking about ",offset,"bases back from first match at b index ",bIndex)
 		distance = 0
 		for i := bIndex * 2; i > 0 && offset > 0; i -= 2 {
 			offset -= m.SeqB.segments[i] + k
@@ -1171,15 +1011,12 @@ func (m *SeedMatch) GetBaseIndex(aIndex int, k int) (index int, bases int, dista
 			bIndex--
 		}
 		if bIndex == 0 {
-			//fmt.Println("before b's ver first seed! By ",offset," out of our ",m.SeqB.segments[0]," front bases.")
 			return 0, -offset, distance + offset //the index in a is before us, so this will probably be at a negative offset
 		}
-		//fmt.Println("Counting back from first match in B at",m.MatchB[0],"we get to",bIndex,"with",offset,"bases left over")
 		return bIndex, -offset, distance //-offset are the extra b bases we removed past the beginning of a
 	}
 	before--
 	bIndex := m.MatchB[before]
-	//fmt.Println("The prior matches are at:",m.MatchA[before],",",m.MatchB[before]," in A/B: ",sequence.KmerString(m.SeqA.segments[m.MatchA[before]*2+1],k),"==",sequence.KmerString(m.SeqB.segments[m.MatchB[before]*2+1],k))
 	//test for exact match
 	if aIndex == m.MatchA[before] {
 		return bIndex, 0, 0
@@ -1189,7 +1026,6 @@ func (m *SeedMatch) GetBaseIndex(aIndex int, k int) (index int, bases int, dista
 	for i := m.MatchA[before] + 1; i <= aIndex; i++ {
 		offset += m.SeqA.segments[i*2] + k //offset up to this later seed
 	}
-	//fmt.Println("Counted",offset,"more bases in A to get to",aIndex)
 	distance = 0
 	//and remove offset for any additional seeds that appear in b
 	for i := bIndex*2 + 2; i < len(m.SeqB.segments) && offset >= m.SeqB.segments[i]; i += 2 {
@@ -1200,7 +1036,6 @@ func (m *SeedMatch) GetBaseIndex(aIndex int, k int) (index int, bases int, dista
 	if bIndex >= len(m.SeqB.segments)/2 { //we ran over the end
 		return bIndex - 1, offset, distance + offset
 	}
-	//fmt.Println("B moved up to index",bIndex,"with remaining bases=",offset)
 	return bIndex, offset, distance + offset
 }
 
