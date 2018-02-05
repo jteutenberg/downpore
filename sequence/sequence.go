@@ -2,7 +2,6 @@ package sequence
 
 import (
 	"fmt"
-	"log"
 )
 
 type Sequence interface {
@@ -11,7 +10,6 @@ type Sequence interface {
 	GetName() string
 	String() string
 	SubSequence(int, int) Sequence
-	//StitchSequence(Sequence, int, int) int
 	ReverseComplement() Sequence
 	Len() int
 	GetOffset() int
@@ -22,7 +20,8 @@ type Sequence interface {
 	Quality() []byte
 	SetQuality([]byte)
 	Detach() //ensure this sequence does not have slice references on shared arrays
-	CountKmers(int, int, []bool) int
+	CountKmers(int, int, int, []bool) int
+	CountKmersBetween(int, int,int, int, int, []bool) int
 	WriteSegments([]int, int, int, []bool)
 }
 
@@ -68,22 +67,8 @@ func NewPackedSequence(id int, seq string, name *string) Sequence {
 	finalLength := len(seq) - internalLength //partial bytes at the end
 	data := make([]byte, (len(seq)+3)/4)
 	if internalLength >= 4 {
-		//log.Println(len(seq),internalLength,len(data))
 		packBytes([]byte(seq[:internalLength]), data)
 	}
-	/*index := 0
-	for i := 0; i <= len(seq)-4; i += 4 {
-		b1 := byte(seq[i])
-		b1 = ((b1 >> 1) ^ ((b1 & 4) >> 2)) & 3
-		b2 := byte(seq[i+1])
-		b2 = ((b2 >> 1) ^ ((b2 & 4) >> 2)) & 3
-		b3 := byte(seq[i+2])
-		b3 = ((b3 >> 1) ^ ((b3 & 4) >> 2)) & 3
-		b4 := byte(seq[i+3])
-		b4 = ((b4 >> 1) ^ ((b4 & 4) >> 2)) & 3
-		data[index]= (b1 << 6) | (b2 << 4) | (b3 << 2) | b4
-		index++
-	}*/
 	// and the partial one at the end (with trailing zeroes)
 	if finalLength > 0 {
 		var b byte
@@ -243,13 +228,31 @@ func (s *packedSequence) String() string {
 	return string(buf[:s.length])
 }
 
-func (s *byteSequence) CountKmers(k, mask int, kmers []bool) int {
+func (s *byteSequence) CountKmers(upTo, k, mask int, kmers []bool) int {
 	seed := s.KmerAt(0, k) >> 2
 	count := 0
 	for i := k - 1; i < len(s.data); i++ {
 		seed = s.NextKmer(seed, mask, i)
 		if kmers[seed] {
 			count++
+			if count >= upTo {
+				break
+			}
+		}
+	}
+	return count
+}
+
+func (s *byteSequence) CountKmersBetween(from, to, upTo, k, mask int, kmers []bool) int {
+	seed := s.KmerAt(from, k) >> 2
+	count := 0
+	for i := from+k - 1; i < to; i++ {
+		seed = s.NextKmer(seed, mask, i)
+		if kmers[seed] {
+			count++
+			if count >= upTo {
+				break
+			}
 		}
 	}
 	return count
@@ -263,9 +266,6 @@ func (s *byteSequence) WriteSegments(segments []int, k, mask int, seeds []bool) 
 	for i := k - 1; i < len(s.data); i++ {
 		seed = s.NextKmer(seed, mask, i)
 		if seeds[seed] {
-			if count >= len(segments)-1 {
-				log.Fatal("over count:", count, len(segments), "not", s.CountKmers(k, mask, seeds), "mask:", mask, "\nat kmer", i-k, ":", seed)
-			}
 			segments[count] = kmerIndex - prev
 			segments[count+1] = seed
 			prev = kmerIndex + k
@@ -277,27 +277,19 @@ func (s *byteSequence) WriteSegments(segments []int, k, mask int, seeds []bool) 
 }
 
 func packedWriteSegments(data []byte, skipFront, skipBack, k int, seeds []bool, segments []int)
-func packedCountKmers(data []byte, skipFront, skipBack, k int, seeds []bool) int
+func packedCountKmers(data []byte, upTo, skipFront, skipBack, k int, seeds []bool) int
 
-func (s *packedSequence) CountKmers(k, mask int, seeds []bool) int {
-	return packedCountKmers(s.data, 4-s.firstLen, 4-s.finalLen, k, seeds)
+func (s *packedSequence) CountKmers(upTo, k, mask int, seeds []bool) int {
+	return packedCountKmers(s.data, upTo, 4-s.firstLen, 4-s.finalLen, k, seeds)
+}
+func (s *packedSequence) CountKmersBetween(from, to,upTo, k, mask int, seeds []bool) int {
+	//shrink in from the left and right a bit, i.e. let us undercount sometimes
+	start := (from+4-s.firstLen + 3)/4
+	end := (to+4-s.firstLen)/4
+	return packedCountKmers(s.data[start:end], upTo, 4-s.firstLen, 4-s.finalLen, k, seeds)
 }
 func (s *packedSequence) WriteSegments(segments []int, k, mask int, seeds []bool) {
-	//	temp := make([]int, len(segments)+20)
 	packedWriteSegments(s.data, 4-s.firstLen, 4-s.finalLen, k, seeds, segments)
-	/*packedWriteSegments(s.data, 4-s.firstLen, 4-s.finalLen, k, seeds, temp)
-	if temp[len(segments)] != 0 {
-		bs := NewByteSequence(0,s.String(),nil)
-		log.Println("Count:",s.CountKmers(k,mask,seeds))
-		log.Println("Byte count",bs.CountKmers(k,mask,seeds))
-		log.Println("Segment overflow!\n",temp)
-		log.Println(s.String(),"...")
-		t2 := make([]int, len(temp))
-		log.Println("Byte count",bs.CountKmers(k,mask,seeds))
-		log.Println("count",s.CountKmers(k,mask,seeds))
-		bs.WriteSegments(t2,k, mask,seeds)
-		log.Fatal("segs:",t2)
-	}*/
 }
 
 func (s *byteSequence) SubSequence(start, end int) Sequence {

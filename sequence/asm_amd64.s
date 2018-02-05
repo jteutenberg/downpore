@@ -81,12 +81,13 @@ TEXT ·packBytes(SB),7,$0
 
   RET
 
-//func packedCountKmers(data []byte, skipFront, skipBack, k int, seeds []bool) int
+//func packedCountKmers(data []byte, upTo, skipFront, skipBack, k int, seeds []bool) int
 TEXT ·packedCountKmers(SB),7,$0
   MOVQ data+0(FP), AX //AX points to the slice data
   MOVQ data+8(FP), R8 //data length
-  MOVQ skipBack+32(FP), BX
-  MOVQ k+40(FP), DX
+  MOVQ upTo+24(FP), SI
+  MOVQ skipBack+40(FP), BX
+  MOVQ k+48(FP), DX
 
   SUBQ $1, R8 //ignore first byte
   SHLQ $2, R8 //now length is in bases
@@ -109,14 +110,14 @@ TEXT ·packedCountKmers(SB),7,$0
   MOVQ R9, X0
 
   //add k-mers until we hit data length
-  MOVQ seeds+48(FP), DX //DX holds the seeds data
+  MOVQ seeds+56(FP), DX //DX holds the seeds data
   MOVQ $0, R9 //count
 
   //do the first byte one k-mer at a time
   MOVQ (AX), X1
   PSHUFB X0, X1
   MOVL X1, R10 //R10 is the first byte, starting at pos 32
-  MOVQ skipFront+24(FP), BX
+  MOVQ skipFront+32(FP), BX
   MOVL $4, R11
   SUBL BX, R11 //bases to process at front
   SHLL $1, BX //bits to remove
@@ -176,6 +177,8 @@ TEXT ·packedCountKmers(SB),7,$0
   ANDQ $0x00000000000000FF, R13 //clear the non-byte part
   ADDQ R13, R9 //minimise dependencies on R9
 
+  CMPQ R9, SI
+  JGE endtail
   SUBQ $4, R8
   CMPQ R8, $4
   JGE internal
@@ -203,7 +206,7 @@ TEXT ·packedCountKmers(SB),7,$0
 
   endtail:
   //return
-  MOVQ R9, ret+72(FP)
+  MOVQ R9, ret+80(FP)
 
   RET
 

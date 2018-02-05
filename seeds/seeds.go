@@ -35,7 +35,7 @@ func (g *SeedIndex) NewSeedSequence(seq sequence.Sequence) *SeedSequence {
 	for i := 0; i < k; i++ {
 		mask = (mask << 2) | 3
 	}
-	count := seq.CountKmers(k, mask, g.seeds)
+	count := seq.CountKmers(seq.Len(),k, mask, g.seeds)
 	segments := make([]int, count*2+1)
 	seq.WriteSegments(segments, k, mask, g.seeds)
 	name := seq.GetName()
@@ -55,7 +55,7 @@ func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float6
 		mask = (mask << 2) | 3
 	}
 
-	count := seq.CountKmers(k, mask, g.seeds)
+	count := seq.CountKmers(minSeeds, k, mask, g.seeds)
 
 	if count < minSeeds {
 		//find the n best seeds that will top us up to the required amount
@@ -120,6 +120,44 @@ func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float6
 			}
 		}
 		g.lock.Unlock()
+	}
+}
+
+//AddSingleSeeds adds one seet for every seedRate bases if no seeds already exists within them.
+//The seed with minimal rank is always selected.
+func (g *SeedIndex) AddSingleSeeds(seq sequence.Sequence, seedRate int, ranks []float64) {
+	//count the number existing in the index and generate the gapped-seed sequence using those
+	k := int(g.seedSize)
+
+	var mask int
+	for i := 0; i < k; i++ {
+		mask = (mask << 2) | 3
+	}
+
+	//TODO: feed each subsequence to a goroutine
+	for i := 0; i < seq.Len()-seedRate; i += seedRate {
+		count := seq.CountKmersBetween(i,i+seedRate,1, k, mask, g.seeds)
+		if count == 0 {
+			end := i+seedRate
+			//find the  best seed
+			kmer := seq.KmerAt(i, k)
+			bestValue := ranks[kmer]
+			bestKmer := kmer
+			for j := i+k; j < end; j++ {
+				kmer = seq.NextKmer(kmer, mask, j)
+				value := ranks[kmer]
+				if value < bestValue {
+					bestValue = value
+					bestKmer = kmer
+				}
+			}
+			g.lock.Lock()
+			if !g.seeds[bestKmer] { //in case of race condition
+				g.seeds[bestKmer] = true
+				g.size++
+			}
+			g.lock.Unlock()
+		}
 	}
 }
 

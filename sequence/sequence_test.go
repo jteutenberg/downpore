@@ -104,10 +104,15 @@ func Test6CountKmers(test *testing.T) {
 	}
 	s1 := NewByteSequence(0, s, nil)
 	s2 := NewPackedSequence(0, s, nil)
-	c1 := s1.CountKmers(6, mask, ks)
-	c2 := s2.CountKmers(6, mask, ks)
+	c1 := s1.CountKmers(100,6, mask, ks)
+	c2 := s2.CountKmers(100,6, mask, ks)
 	if c1 != c2 || c1 != count {
 		test.Error("Mismatching kmer counts : ", count, c1, c2)
+	}
+	c1 = s1.CountKmers(7,6, mask, ks)
+	c2 = s2.CountKmers(7,6, mask, ks)
+	if c1 < 7 || c2 < 7 {
+		test.Error("Mismatching partial kmer counts (7):", c1, c2)
 	}
 
 	mask = 0
@@ -117,8 +122,8 @@ func Test6CountKmers(test *testing.T) {
 	s1 = s1.SubSequence(7, s1.Len()-7)
 	s2 = s2.SubSequence(7, s2.Len()-7)
 	ks, count = kmerSet(s[7:len(s)-7], 8)
-	c1 = s1.CountKmers(8, mask, ks)
-	c2 = s2.CountKmers(8, mask, ks)
+	c1 = s1.CountKmers(100,8, mask, ks)
+	c2 = s2.CountKmers(100,8, mask, ks)
 	if c1 != c2 || c1 != count {
 		test.Error("Mismatching kmer counts : ", count, c1, c2, "\n", s1.String(), "\n", s2.String())
 	}

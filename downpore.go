@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/jteutenberg/downpore/commands"
+	"log"
 	"os"
 	"strings"
 )
@@ -21,100 +22,71 @@ func alignedPrint(lines [][]string) {
 	}
 	for _, line := range lines {
 		for i, part := range line {
-			fmt.Fprint(os.Stderr, part)
+			fmt.Print(part)
 			for j := maxLengths[i] - len(part) + 2; j > 0; j-- {
-				fmt.Fprint(os.Stderr, " ")
+				fmt.Print(" ")
 			}
 		}
-		fmt.Fprintln(os.Stderr, "")
+		fmt.Println()
 	}
 }
 
-func parseArgs(com commands.Command) (map[string]string, bool) {
+func parseArgs(com commands.Command) map[string]string {
 	args, alias, _ := com.GetArgs()
 	invertAlias := make(map[string]string)
 	for k, v := range alias {
 		invertAlias[v] = k
 	}
-	for i := 2; i < len(os.Args); i++ {
+	for i := 2; i < len(os.Args); i += 2 {
 		name := strings.TrimLeft(os.Args[i], "-")
-		//check for = style
-		equals := strings.Index(name, "=")
-		var value string
-		if equals > 0 {
-			value = name[equals+1:]
-			name = name[:equals]
-		}
 		if a, exists := invertAlias[name]; exists {
 			name = a
 		}
 		if _, exists := args[name]; !exists {
-			fmt.Fprintln(os.Stderr, "Unrecognised argument:", name)
-			return nil, false
+			log.Fatal("Unrecognised argument:", name)
 		}
-		if equals > 0 {
-			args[name] = value
-		} else {
-			if i >= len(os.Args)+1 {
-				return nil, false
-			}
-			args[name] = os.Args[i+1]
-			i++
-		}
+		args[name] = os.Args[i+1]
 	}
-	return args, true
-}
-
-func printHelp(com commands.Command) {
-	args, alias, desc := com.GetArgs()
-	lines := make([][]string, 0, len(args))
-	for arg, def := range args {
-		if a, exists := alias[arg]; exists {
-			line := []string{"-" + arg, "-" + a, desc[arg], "(default:" + def + ")"}
-			lines = append(lines, line)
-		} else {
-			line := []string{"-" + arg, "", desc[arg], "(default:" + def + ")"}
-			lines = append(lines, line)
-		}
-	}
-	alignedPrint(lines)
+	return args
 }
 
 func main() {
-	coms := []commands.Command{commands.NewVersionCommand(), commands.NewTrimCommand(), commands.NewOverlapCommand()}
+	coms := []commands.Command{commands.NewOverlapCommand(), commands.NewMapCommand(), commands.NewTrimCommand()}
 	if len(os.Args) == 1 {
-		fmt.Fprintln(os.Stderr, "Available commands:\n help <command> Describe the command and its arguments")
+		fmt.Println("Available commands:\n help <command> Describe the command and its arguments")
 		for _, com := range coms {
-			fmt.Fprintln(os.Stderr, " "+com.GetName())
+			fmt.Println(" " + com.GetName())
 		}
 	} else if os.Args[1] == "help" {
 		if len(os.Args) > 2 {
 			for _, com := range coms {
 				if com.GetName() == os.Args[2] {
-					printHelp(com)
+					args, alias, desc := com.GetArgs()
+					lines := make([][]string, 0, len(args))
+					for arg, def := range args {
+						if a, exists := alias[arg]; exists {
+							line := []string{"-" + arg, "-" + a, desc[arg], "(default:" + def + ")"}
+							//fmt.Println("-"+arg,"\t-"+a,"\t"+desc[arg],"(default:"+def+")")
+							lines = append(lines, line)
+						} else {
+							line := []string{"-" + arg, "", desc[arg], "(default:" + def + ")"}
+							//fmt.Println("-"+arg,"\t\t"+desc[arg],"(default:"+def+")")
+							lines = append(lines, line)
+						}
+					}
+					alignedPrint(lines)
 					return
 				}
 			}
-			fmt.Fprintln(os.Stderr, "Usage: downpore help <command>\nAvailable commands:\n")
-			for _, com := range coms {
-				fmt.Fprintln(os.Stderr, " "+com.GetName())
-			}
 		}
-		fmt.Fprintln(os.Stderr, "Usage: downpore help <command>\nTo see a list of available commands just run downpore")
+		fmt.Println("Usage: downpore help <command>\nTo see a list of available commands just run downpore")
 	} else {
 		for _, com := range coms {
 			if com.GetName() == os.Args[1] {
-				if args, ok := parseArgs(com); !ok {
-					printHelp(com)
-				} else {
-					com.Run(args)
-				}
+				com.Run(parseArgs(com))
 				return
 			}
 		}
-		fmt.Fprintln(os.Stderr, "Available commands:\n help <command> Describe the command and its arguments")
-		for _, com := range coms {
-			fmt.Fprintln(os.Stderr, " "+com.GetName())
-		}
+		fmt.Println("Available commands:\n help <command> Describe the command and its arguments")
 	}
 }
