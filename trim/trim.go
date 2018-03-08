@@ -56,21 +56,16 @@ func (t *Trimmer) setupIndex() {
 	for _, s := range t.originalFront {
 		t.frontAdapters = append(t.frontAdapters, t.index.NewAllSeedSequence(s))
 		set := util.NewIntSet()
-		t.frontAdapterSets = append(t.frontAdapterSets, set)
 		kmers := s.ShortKmers(t.k, true)
-		for _, kmer := range kmers {
-			set.Add(uint(kmer))
-		}
-
+		t.index.GetSeedsFromKmers(kmers, set)
+		t.frontAdapterSets = append(t.frontAdapterSets, set)
 	}
 	for _, s := range t.originalBack {
 		t.backAdapters = append(t.backAdapters, t.index.NewAllSeedSequence(s))
 		set := util.NewIntSet()
-		t.backAdapterSets = append(t.backAdapterSets, set)
 		kmers := s.ShortKmers(t.k, true)
-		for _, kmer := range kmers {
-			set.Add(uint(kmer))
-		}
+		t.index.GetSeedsFromKmers(kmers, set)
+		t.backAdapterSets = append(t.backAdapterSets, set)
 	}
 	t.frontCounts = make([]int, len(t.originalFront), len(t.originalFront))
 	t.backCounts = make([]int, len(t.originalBack), len(t.originalBack))
@@ -143,48 +138,51 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 		count := 0
 		for _, index := range ms {
 			target := t.index.GetSeedSequence(uint(index))
-			match := target.Match(ad, t.frontAdapterSets[i], minMatch, t.k)
-			if match != nil {
-				identity, _ := match.GetBasesCovered(t.k)
-				if (identity*100)/ad.Len() < t.midThreshold {
-					continue
-				}
-				start := target.GetOffset() + target.GetSeedOffset(match.MatchB[0], t.k) - ad.GetSeedOffset(match.MatchA[0], t.k)
-				seqLen := target.GetOffset() + target.Len() + target.GetInset()
-				if start < minSeqLength { //just crop the front off
-					if start+ad.Len()+edgeSize < seqLen {
-						seqs.SetFrontTrim(target.GetID(), start+ad.Len()+t.extraMidTrim)
-						if t.tagAdapters {
-							seqs.SetName(target.GetID(), ad.GetName()+"_"+seqs.GetName(target.GetID()))
-						}
-					} else {
-						seqs.SetIgnore(target.GetID(), true)
+			targetSet := t.index.GetSeedSet(uint(index))
+			matches := target.Match(ad, t.frontAdapterSets[i], targetSet, minMatch, t.k)
+			if matches != nil {
+				for _, match := range matches {
+					identity, _ := match.GetBasesCovered(t.k)
+					if (identity*100)/ad.Len() < t.midThreshold {
+						continue
 					}
-				} else if start+minSeqLength+ad.Len() > seqLen { //crop off the tail
-					seqs.SetBackTrim(target.GetID(), seqLen-start+t.extraMidTrim)
-				} else {
-					//prepare the split. Compensate for the trim that will be applied.
-					id := target.GetID()
-					futureTrim := seqs.GetFrontTrim(id)
-					if splits[id] != nil {
-						if splits[id].aEnd > start-t.extraMidTrim-futureTrim {
-							splits[id].aEnd = start - t.extraMidTrim - futureTrim
+					start := target.GetOffset() + target.GetSeedOffset(match.MatchB[0], t.k) - ad.GetSeedOffset(match.MatchA[0], t.k)
+					seqLen := target.GetOffset() + target.Len() + target.GetInset()
+					if start < minSeqLength { //just crop the front off
+						if start+ad.Len()+edgeSize < seqLen {
+							seqs.SetFrontTrim(target.GetID(), start+ad.Len()+t.extraMidTrim)
+							if t.tagAdapters {
+								seqs.SetName(target.GetID(), ad.GetName()+"_"+seqs.GetName(target.GetID()))
+							}
+						} else {
+							seqs.SetIgnore(target.GetID(), true)
 						}
-						if splits[id].bStart < start+ad.Len()+t.extraMidTrim-futureTrim {
-							splits[id].bStart = start + ad.Len() + t.extraMidTrim - futureTrim
-						}
+					} else if start+minSeqLength+ad.Len() > seqLen { //crop off the tail
+						seqs.SetBackTrim(target.GetID(), seqLen-start+t.extraMidTrim)
 					} else {
-						if t.verbosity > 2 {
-							log.Println(match.LongString(t.k))
-						}
-						splits[id] = &sequenceSplit{id: id, aEnd: start - t.extraMidTrim - futureTrim, bStart: start + ad.Len() + t.extraMidTrim - futureTrim}
-						ids = append(ids, id)
-						if id > maxID {
-							maxID = id
+						//prepare the split. Compensate for the trim that will be applied.
+						id := target.GetID()
+						futureTrim := seqs.GetFrontTrim(id)
+						if splits[id] != nil {
+							if splits[id].aEnd > start-t.extraMidTrim-futureTrim {
+								splits[id].aEnd = start - t.extraMidTrim - futureTrim
+							}
+							if splits[id].bStart < start+ad.Len()+t.extraMidTrim-futureTrim {
+								splits[id].bStart = start + ad.Len() + t.extraMidTrim - futureTrim
+							}
+						} else {
+							if t.verbosity > 2 {
+								log.Println(match.LongString(t.index))
+							}
+							splits[id] = &sequenceSplit{id: id, aEnd: start - t.extraMidTrim - futureTrim, bStart: start + ad.Len() + t.extraMidTrim - futureTrim}
+							ids = append(ids, id)
+							if id > maxID {
+								maxID = id
+							}
 						}
 					}
+					count++
 				}
-				count++
 			}
 		}
 	}
@@ -206,8 +204,8 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 				log.Println("Splitting read ", split.id, " into: 0 -", split.aEnd, "and", split.bStart, "-", seq.Len())
 				log.Println(seq.SubSequence(split.aEnd+t.extraMidTrim, split.bStart-t.extraMidTrim).String())
 			}
-			seqs.AddSequence(seq.SubSequence(0, split.aEnd), seqs.GetName(split.id)+" (left)")
-			seqs.AddSequence(seq.SubSequence(split.bStart, seq.Len()), seqs.GetName(split.id)+" (right)")
+			seqs.AddSequence(seq.SubSequence(0, split.aEnd), seqs.GetName(split.id)+"_(left)")
+			seqs.AddSequence(seq.SubSequence(split.bStart, seq.Len()), seqs.GetName(split.id)+"_(right)")
 		}
 		seqs.SetIgnore(split.id, true)
 	}
@@ -297,11 +295,15 @@ func (t *Trimmer) isNewFullMatch(kmerSet *util.IntSet, seq sequence.Sequence, th
 			if seedSeq == nil {
 				seedSeq = t.index.NewSeedSequence(seq)
 			}
-			m := seedSeq.Match(adapters[i], adapter, int(minHits-1), t.k) //require the same high number of in-order matches
-			if m != nil && len(m.MatchA) >= int(minHits) {
-				identity, _ := m.GetBasesCovered(t.k)
-				if (identity*100)/adapters[i].Len() >= threshold {
-					enabled[i] = true
+			ms := seedSeq.Match(adapters[i], adapter, kmerSet, int(minHits-1), t.k) //require the same high number of in-order matches
+			if ms != nil {
+				for _, m := range ms {
+					if len(m.MatchA) >= int(minHits) {
+						identity, _ := m.GetBasesCovered(t.k)
+						if (identity*100)/adapters[i].Len() >= threshold {
+							enabled[i] = true
+						}
+					}
 				}
 			}
 		}
@@ -325,48 +327,52 @@ func (t *Trimmer) findMatches(kmerSet *util.IntSet, seq sequence.Sequence, adapt
 				seedSeq = t.index.NewSeedSequence(seq)
 			}
 			//have enough k-mers, check their ordering
-			m := seedSeq.Match(adapters[i], adapter, 3, t.k)
-			if m != nil && len(m.MatchA) >= 3 {
-				identity, _ := m.GetBasesCovered(t.k)
-				identity = (identity * 100) / adapters[i].Len()
-				isBarcode := strings.HasPrefix(adapters[i].GetName(), "Barcode")
-				if !barcoded && isBarcode {
-					barcoded = true
-					bestIdent = identity
-					bestMatch = i
-				} else if barcoded {
-					if isBarcode {
-						//test for ambiguity
-						delta := identity - bestIdent
-						ambiguous = delta < 5 && delta > -5
-						if identity > bestIdent {
+			ms := seedSeq.Match(adapters[i], adapter, kmerSet, 3, t.k)
+			if ms != nil {
+				for _, m := range ms {
+					if len(m.MatchA) >= 3 {
+						identity, _ := m.GetBasesCovered(t.k)
+						identity = (identity * 100) / adapters[i].Len()
+						isBarcode := strings.HasPrefix(adapters[i].GetName(), "Barcode")
+						if !barcoded && isBarcode {
+							barcoded = true
+							bestIdent = identity
+							bestMatch = i
+						} else if barcoded {
+							if isBarcode {
+								//test for ambiguity
+								delta := identity - bestIdent
+								ambiguous = delta < 5 && delta > -5
+								if identity > bestIdent {
+									bestIdent = identity
+									bestMatch = i
+								}
+							}
+						} else if identity > bestIdent {
 							bestIdent = identity
 							bestMatch = i
 						}
-					}
-				} else if identity > bestIdent {
-					bestIdent = identity
-					bestMatch = i
-				}
 
-				start := seedSeq.GetSeedOffset(m.MatchB[0], t.k) + adapters[i].GetSeedOffset(m.MatchA[0], t.k)
-				end := seedSeq.GetSeedOffset(m.MatchB[len(m.MatchB)-1], t.k) + adapters[i].GetSeedOffsetFromEnd(m.MatchA[len(m.MatchA)-1], t.k)
-				if start < earliest {
-					if start < 0 {
-						start = 0
+						start := seedSeq.GetSeedOffset(m.MatchB[0], t.k) + adapters[i].GetSeedOffset(m.MatchA[0], t.k)
+						end := seedSeq.GetSeedOffset(m.MatchB[len(m.MatchB)-1], t.k) + adapters[i].GetSeedOffsetFromEnd(m.MatchA[len(m.MatchA)-1], t.k)
+						if start < earliest {
+							if start < 0 {
+								start = 0
+							}
+							earliest = start
+						}
+						if end > latest {
+							if end > seq.Len() {
+								end = seq.Len()
+							}
+							latest = end
+						}
+						found = true
+						t.lock.Lock()
+						counts[i]++
+						t.lock.Unlock()
 					}
-					earliest = start
 				}
-				if end > latest {
-					if end > seq.Len() {
-						end = seq.Len()
-					}
-					latest = end
-				}
-				found = true
-				t.lock.Lock()
-				counts[i]++
-				t.lock.Unlock()
 			}
 		}
 	}
@@ -388,15 +394,11 @@ func (t *Trimmer) checkAdapterWorker(set sequence.SequenceSet, frontEnabled, bac
 		backSeq := seq.SubSequence(seq.Len()-edgeSize, seq.Len())
 		kmers := frontSeq.ShortKmers(t.k, true)
 		kmerSet.Clear()
-		for _, k := range kmers {
-			kmerSet.Add(uint(k))
-		}
+		t.index.GetSeedsFromKmers(kmers, kmerSet)
 		t.isNewFullMatch(kmerSet, frontSeq, threshold, t.frontAdapters, t.frontAdapterSets, frontEnabled)
 		kmerSet.Clear()
 		kmers = backSeq.ShortKmers(t.k, true)
-		for _, k := range kmers {
-			kmerSet.Add(uint(k))
-		}
+		t.index.GetSeedsFromKmers(kmers, kmerSet)
 		t.isNewFullMatch(kmerSet, backSeq, threshold, t.backAdapters, t.backAdapterSets, backEnabled)
 	}
 	done <- true
@@ -416,15 +418,11 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 		kmers := frontSeq.ShortKmers(t.k, true) //more sensitive
 		//manually check first 150 vs front adapters and last 150 vs back adapters
 		kmerSet.Clear()
-		for _, k := range kmers {
-			kmerSet.Add(uint(k))
-		}
+		t.index.GetSeedsFromKmers(kmers, kmerSet)
 		_, start, foundStart, matchIndex := t.findMatches(kmerSet, frontSeq, t.frontAdapters, t.frontAdapterSets, t.frontCounts)
 		kmerSet.Clear()
 		kmers = backSeq.ShortKmers(t.k, true) //more sensitive
-		for _, k := range kmers {
-			kmerSet.Add(uint(k))
-		}
+		t.index.GetSeedsFromKmers(kmers, kmerSet)
 		end, _, foundEnd, _ := t.findMatches(kmerSet, backSeq, t.backAdapters, t.backAdapterSets, t.backCounts)
 
 		t.lock.Lock()

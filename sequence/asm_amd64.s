@@ -76,7 +76,7 @@ TEXT ·packBytes(SB),7,$0
   ADDQ $4, AX
   ADDQ $1, BX
   SUBQ $4, R8
-  CMPQ R8, $0
+  CMPQ R8, $4
   JGE nextbyte
 
   RET

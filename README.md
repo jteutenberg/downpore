@@ -4,7 +4,7 @@ A suite of tools for use in genome assembly and consensus. Work in progress.
 # Table of contents
 * [Installation](#installation)
   * [Build from source](#build-from-source)
-  * [Run precompiled binary](#run-precompiled-binary)
+  * [Run precompiled binary](#run-precompile-binary)
 * [Usage](#usage)
 * [Command: trim](#command-trim)
   * [Trim overview](#trim-overview)
@@ -139,9 +139,9 @@ Usage example:
 ```downpore overlap -i reads.fastq > overlaps.paf```
 
 ## Overlap overview
-The overlap command matches the beginning and end of each input read (default length of 1000 bases each) to the full set of input reads. Queries are performed in batches with each batch re-generating an index of all reads using a new set of seed k-mers. All sub-sequences with matching sets of k-mers then have these chained into gapped-seed sequences which are treated as a single ~1000 base overlap.
+The overlap command matches the beginning and end of each input read (default length of 1000 bases) to the full set of input reads. Queries are performed in batches with each batch regenerating an index of all reads using a new set of seed k-mers. Sub-sequences with matching sets of k-mers then have these chained into gapped-seed sequences which are treated as a single ~1000 base overlap.
 
-It is left to downstream analysis (assembly) to manage any ambiguous overlaps due to (pseudo-)repeats in the genome. This includes the use of information pairing the beginning and end overlap results for long reads. 
+It is left to downstream analysis (assembly) to manage any ambiguous overlaps due to repeats in the genome. This includes the use of information pairing the left and right overlap results for each read. 
 
 ### Seed selection
 By default each kilobase query has a minimum of 15 10-mer seeds. A batch of queries is complete once the limit of unique seeds is reached (default of 10000). Each query sequence generates new seeds until it reaches the required amount, so in practice early queries will have more matching seeds and the final query in the batch exactly 15 (or whatever the minimum is set to).
@@ -169,7 +169,7 @@ Every sequence returned from a query has its set of k-mers chained using dynamic
 * `input` the input reads file
 * `himem` whether to cache input reads in memory (true by default)
 
-## Minimap2 comparison
+## Minimap2 performance comparison
 By default, `minimap2 -x ava-ont` uses the full input reads as queries. To make a fair comparison we extracted an query set that is equivalent to that used by downpore and ran `minimap2 -x ava-ont reads.fastq queries.fastq`. For small data with "normal" long reads this gives around a 3-4x speedup.
 
 The minimap2 version used here was 2.7.
@@ -179,10 +179,10 @@ As ground truth we use minimap2 mapping to reference of both queries and all inp
 At present I do not have a server for testing, so only the small E.coli data (as described in Command:trim) could be run under minimap2. The time and memory used for the standard minimap2 is listed as "ava" below in case it is of interest.
 
 Algorithm | time | memory | recall | precision 
----| ---:| ---:| ---:| ---:
+---| ---:| ---:| ---:| ---:| ---:
 downpore | 35s | 0.7GB | 100%? | 95%?
 minimap2 | 21s | 3.0GB | 83%?| 99.5%?
-minimap2 (ava) | 1m31s | 3.1GB | - | -
+minimap2 (ava) | 1m31s | 3.1GB | | 
 
 Downpore found strictly more overlaps than minimap2, however some of these were not identified by minimap2's map to reference. A manual inspection of a handful of these found some that appear to be correct overlaps -- so the 95% value listed is a lower bound on the true precision.
 

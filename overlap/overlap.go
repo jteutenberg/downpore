@@ -16,7 +16,7 @@ type SeedQuery struct {
 }
 
 type Overlapper interface {
-	PrepareQueries(int, uint, []float64, <-chan sequence.Sequence, bool) []*SeedQuery
+	PrepareQueries(int, int, []float64, <-chan sequence.Sequence, bool) []*SeedQuery
 	AddSequences(<-chan sequence.Sequence)
 	FindOverlaps([]*SeedQuery) <-chan *seeds.SeedMatch
 	SetOverlapSize(int)
@@ -37,7 +37,7 @@ func NewOverlapper(index *seeds.SeedIndex, chunkSize uint, numWorkers int, overl
 }
 
 //TODO: make this a factory-style method (currently only uses "centre")
-func (lap *overlapper) PrepareQueries(numSeeds int, seedLimit uint, kmerValues []float64, seqs <-chan sequence.Sequence, centre bool) []*SeedQuery {
+func (lap *overlapper) PrepareQueries(numSeeds int, seedLimit int, kmerValues []float64, seqs <-chan sequence.Sequence, centre bool) []*SeedQuery {
 	completed := make(chan bool, lap.numWorkers)
 	inputSeq := make(chan sequence.Sequence, lap.numWorkers*2)
 	weightSides := false
@@ -256,11 +256,13 @@ func (lap *overlapper) matchWorker(input <-chan *SeedQuery, output chan<- *seeds
 		for _, match := range matches {
 			m := lap.index.GetSeedSequence(match)
 			//match is an index in the seed index, the sequence ID is external
-			sMatch := m.Match(q.Query, seedSet, minMatches, k)
-			if sMatch != nil {
-				sMatch.QueryID = q.ID
-				sMatch.ReverseComplementQuery = q.ReverseComplement
-				output <- sMatch
+			sMatches := m.Match(q.Query, seedSet, lap.index.GetSeedSet(match), minMatches, k)
+			if sMatches != nil {
+				for _, sMatch := range sMatches {
+					sMatch.QueryID = q.ID
+					sMatch.ReverseComplementQuery = q.ReverseComplement
+					output <- sMatch
+				}
 			}
 		}
 	}

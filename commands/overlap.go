@@ -38,7 +38,7 @@ func (com *overlapCommand) GetArgs() (map[string]string, map[string]string, map[
 func (com *overlapCommand) Run(args map[string]string) {
 	overlapSize := ParseInt(args["overlap_size"])
 	numSeeds := ParseInt(args["num_seeds"]) //minimum seeds per overlap region
-	seedBatchSize := uint(ParseInt(args["seed_batch_size"]))
+	seedBatchSize := int(ParseInt(args["seed_batch_size"]))
 	chunkSize := uint(ParseInt(args["chunk_size"])) //slice reads into chunks of this size
 	numWorkers := ParseInt(args["num_workers"])
 	k := ParseInt(args["k"])

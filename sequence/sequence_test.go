@@ -46,6 +46,13 @@ func Test1Lengths(test *testing.T) {
 	if s1.Len() != s2.Len() {
 		test.Error("Mismatching lengths: ", s1.Len(), s2.Len(), "from input", len(s))
 	}
+	for i := 1; i < 5; i++ {
+		s1 = NewByteSequence(0, s[:len(s)-i], nil)
+		s2 = NewPackedSequence(0, s[:len(s)-i], nil)
+		if s1.Len() != s2.Len() {
+			test.Error("Mismatching lengths: ", s1.Len(), s2.Len(), "from input", len(s)-i)
+		}
+	}
 }
 
 func Test2String(test *testing.T) {
@@ -54,6 +61,13 @@ func Test2String(test *testing.T) {
 	s2 := NewPackedSequence(0, s, nil).String()
 	if s1 != s2 {
 		test.Error("Mismatching output: \n", s, "\n", s1, "\n", s2)
+	}
+	for i := 1; i < 5; i++ {
+		s1 = NewByteSequence(0, s[:len(s)-i], nil).String()
+		s2 = NewPackedSequence(0, s[:len(s)-i], nil).String()
+		if s1 != s2 {
+			test.Error("Mismatching output: \n", s[:len(s)-i], "\n", s1, "\n", s2,"length",len(s)-i)
+		}
 	}
 }
 

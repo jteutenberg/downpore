@@ -2,7 +2,6 @@ package seeds
 
 import (
 	"fmt"
-	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
 	"log"
 	"sort"
@@ -70,6 +69,37 @@ func (s *SeedSequence) Trimmed(startOffset, startSeed, endOffset, endSeed, k int
 	segments[len(trimmed.segments)-1] = endOffset
 	trimmed.segments = segments
 	return trimmed, startSeed
+}
+
+//Reduced creates a version of this seed sequence only containing whitelisted seeds
+func (s *SeedSequence) Reduced(whitelist *util.IntSet, k int, makeIndex bool) (reduced *SeedSequence, index []int) {
+	count := 0
+	n := len(s.segments)
+	for i := 1; i < n; i+=2 {
+		if whitelist.Contains(uint(s.segments[i])) {
+			count++
+		}
+	}
+	segs := make([]int, 0, count*2+1)
+	offset := s.segments[0]
+	if makeIndex {
+		index = make([]int, 0, count)
+	}
+	for i := 1; i < n; i+=2 {
+		seed := s.segments[i]
+		if whitelist.Contains(uint(seed)) {
+			segs = append(segs, offset)
+			segs = append(segs, seed)
+			if makeIndex {
+				index = append(index, i/2) //map new seed position to original position
+			}
+			offset = s.segments[i+1]
+		} else {
+			offset += s.segments[i+1] + k
+		}
+	}
+	segs = append(segs, offset)
+	return &SeedSequence{segments: segs, length: s.length, offset: s.offset, inset: s.inset, rc: s.rc, id: s.id, Parent: s}, index
 }
 
 func ReverseComplement(seed uint, k uint) uint {
@@ -303,89 +333,210 @@ func (a *SeedSequence) MatchTo(b *SeedSequence, startA int, startB int, offset i
 	return &m
 }
 
-//Match tests for a match of two gapped-seed sequences, with full-length match on the "query"
-//Seeds not in the provided seedSet are ignored
-func (seq *SeedSequence) Match(query *SeedSequence, seedSet *util.IntSet, minMatch, k int) *SeedMatch {
-	maxOffsetRatio := 1.5
-	minOffsetRatio := 0.66
-	matchA := make([]int, 0, minMatch)
-	matchB := make([]int, 0, minMatch)
-
-	var bestMatch *SeedMatch
-	for i := 1; i < len(seq.segments); i += 2 {
-		next := seq.segments[i]
-		if seedSet != nil && !seedSet.Contains(uint(next)) {
-			continue
-		}
-		qStart := -1
-		for j := 1; j < len(query.segments)-minMatch; j += 2 {
-			if next == query.segments[j] {
-				qStart = j
-				break
+func (seq *SeedSequence) Match(query *SeedSequence, querySet *util.IntSet, seqSet *util.IntSet, minMatch, k int) []*SeedMatch {
+	s := seq
+	q := query
+	var qIndex []int
+	var sIndex []int
+	if querySet != nil {
+		s,sIndex = seq.Reduced(querySet,k,true)
+	}
+	if seqSet != nil {
+		q,qIndex = query.Reduced(seqSet,k,true)
+	}
+	ms := s.dynamicMatch(q, minMatch, k, false)
+	if ms != nil {
+		for _, m := range ms {
+			//convert back from reduced to original sequences' indices
+			for i, pos := range m.MatchA {
+				m.MatchA[i] = qIndex[pos]
 			}
-		}
-		if qStart != -1 {
-			matchA = append(matchA, qStart/2)
-			matchB = append(matchB, i/2)
-			//test completion here
-			qOffset := 0 //how many bases since last kmer
-			offset := seq.segments[i+1]
-			minIndex := i + 2
-			//step forward through the query looking for matches
-			for qIndex := qStart + 2; qIndex < len(query.segments); qIndex += 2 {
-				qOffset += query.segments[qIndex-1]
-				nextOffset := offset
-				minOffset := int(minOffsetRatio * float64(qOffset))
-				if minOffset < 0 {
-					minOffset = int(float64(qOffset) * maxOffsetRatio) // can be further back
-				}
-				maxOffset := int(maxOffsetRatio * float64(qOffset))
-				if maxOffset < k {
-					maxOffset = k //close enough to ignore the gap ratio
-				}
-				for j := minIndex; j < len(seq.segments) && nextOffset < maxOffset; j += 2 {
-					if query.segments[qIndex] == seq.segments[j] {
-						matchA = append(matchA, qIndex/2)
-						matchB = append(matchB, j/2)
-						qOffset = query.segments[qIndex+1] + k
-						offset = seq.segments[j+1] + k
-						minIndex = j + 2
-						break
-					}
-					//walk forward until the offsets differ too much
-					if nextOffset < minOffset {
-						minIndex += 2 //later seeds will also not match here
-						offset += seq.segments[j+1] + k
-					}
-					nextOffset += seq.segments[j+1] + k
-					if nextOffset > maxOffset {
-						//no plausable matches before we got too far away
-						break
-					}
-				}
-				//test for an end condition (no chance of matching enough)
-				if len(matchA)+(len(query.segments)-qIndex-2)/2 < minMatch {
-					break
-				}
+			for i, pos := range m.MatchB {
+				m.MatchB[i] = sIndex[pos]
 			}
-			if len(matchA) >= minMatch && (bestMatch == nil || len(matchA) > len(bestMatch.MatchA)) {
-				skipped := len(query.segments)/2 - len(matchA) //TODO:ignores seq seeds.
-				//distance measure where any missed seeds are assumed to be 2-3 base errors, i.e. divide out k
-				sm := SeedMatch{matchA, matchB, skipped, query, seq, -1, false}
-				if bestMatch != nil {
-					matchA = bestMatch.MatchA[:0]
-					matchB = bestMatch.MatchB[:0]
-				} else {
-					matchA = make([]int, 0, minMatch)
-					matchB = make([]int, 0, minMatch)
-				}
-				bestMatch = &sm
-			}
-			matchA = matchA[:0]
-			matchB = matchB[:0]
+			m.SeqA = query
+			m.SeqB = seq
 		}
 	}
-	return bestMatch
+	return ms
+}
+
+//Full: for a given ref*query position, what length is the best chain to there? Then, take the longest of these.
+//Sparse: most ref*query are singular so almost linear set
+//Given a matching position, *every* chain to it must use that match <- must simplify things
+//Also, at a giving matching position you want to only use the longest match... so...
+//... should be able to just walk left->right down the query, building up an interleaved set of chains
+func (seq *SeedSequence) dynamicMatch(query *SeedSequence, minMatch, k int, debug bool) []*SeedMatch {
+	if minMatch == 0 {
+		minMatch = 1
+	}
+	chainsA := make([][]int, len(query.segments)/2) //chain up to each seed. Early chains will share arrays with later.
+	chainsB := make([][]int, len(query.segments)/2)
+	var allGoodChains []*SeedMatch
+	for qIndex := 1; qIndex < len(query.segments); qIndex += 2 {
+		//1. Consider each matching start position with no existing chain
+		querySeedIndex := qIndex/2
+		if chainsA[querySeedIndex] != nil {
+			continue
+		}
+		for i := 1; i < len(seq.segments)-minMatch*2-2; i+=2 {
+			if seq.segments[i] == query.segments[qIndex] && (chainsA[querySeedIndex] == nil || chainsB[querySeedIndex][len(chainsB[querySeedIndex])-1] != i/2) { //matching seeds, and either no chain or a chain on a different path
+				//  2. Start a new chain with this match
+				if debug {
+					log.Println("Starting new chain at query",qIndex/2,"sequence",i/2)
+				}
+				chainsA[querySeedIndex] = make([]int, 1, (len(query.segments)-qIndex)/2)
+				chainsB[querySeedIndex] = make([]int, 1, (len(query.segments)-qIndex)/2)
+				chainsA[querySeedIndex][0] = querySeedIndex
+				chainsB[querySeedIndex][0] = i/2
+				//  3. Extend the chain forward, setting the chain value at each index as matches are made
+				chainA, chainB := extendChain(query, seq, chainsA, chainsB, qIndex, i, k, debug)
+				if debug {
+					log.Println("Got chain:",chainA,chainB)
+				}
+				//  4. At the end, if the chain is longest so far, and remaining unchained seeds are fewer, return it
+				if len(chainA) >= minMatch {
+					if allGoodChains == nil {
+						allGoodChains = make([]*SeedMatch, 0, 5)
+					}
+					nextLength := (len(chainA)*2)/3
+					if nextLength > minMatch {
+						minMatch = nextLength
+						//remove any chains shorter than this
+						for j := len(allGoodChains)-1; j >= 0; j-- {
+							if len(allGoodChains[j].MatchA) < nextLength {
+								allGoodChains[j] = allGoodChains[len(allGoodChains)-1]
+								allGoodChains = allGoodChains[:len(allGoodChains)-1]
+							}
+						}
+						//TODO: use base coverage rather than chain length
+					}
+					allGoodChains = append(allGoodChains, &SeedMatch{chainA, chainB, 0, query, seq, -1, false})
+					remaining := 0
+					for _, c := range chainsA {
+						if c == nil {
+							remaining++
+						}
+					}
+					if remaining < len(chainA) {
+						if len(chainA) < minMatch {
+							return nil
+						}
+						if debug {
+							log.Println("Only",remaining,"seeds left, so this chain is best!")
+						}
+						return allGoodChains
+					}
+				}
+			}
+		}
+	}
+	return allGoodChains
+}
+
+//Extend a chain forward, setting entries of chainsA and chainsB as we go.
+//Any shorter chains encountered are overwritten (this should be an exceptional case)
+//a and b index are indices in the segments slices, i.e. 2x the seed index
+func extendChain(a, b *SeedSequence, chainsA, chainsB [][]int, aIndex, bIndex, k int, debug bool) ([]int,[]int) {
+	currentChainA := chainsA[aIndex/2]
+	currentChainB := chainsB[aIndex/2]
+	offsetA := a.segments[aIndex+1]
+	offsetB := b.segments[bIndex+1]
+	aIndex += 2
+	bIndex += 2
+	//NOTE: a/bIndex always points to the segment after current offsetA/B
+	for aIndex < len(a.segments) && bIndex < len(b.segments) {
+		//find the next match from current positions/offsets
+		aSeedIndex := aIndex/2
+		//if b is to match this seed, it must be between:
+		var minBOffset int
+		var maxBOffset int
+		if offsetA < 0 {
+			minBOffset = -k
+			maxBOffset = 0
+		} else {
+			minBOffset = (offsetA*2)/3-k
+			maxBOffset = (offsetA*3)/2+k
+		}
+		//if the next b is too far, start moving a forward
+		for maxBOffset < offsetB {
+			offsetA += a.segments[aIndex+1] + k
+			aIndex += 2
+			if aIndex >= len(a.segments) {
+				return currentChainA, currentChainB
+			}
+			aSeedIndex = aIndex/2
+			minBOffset = (offsetA*2)/3 - k
+			maxBOffset = (offsetA*3)/2 + k
+		}
+		//similarly, walk b forward to the minimum offset
+		for offsetB < minBOffset {
+			offsetB += b.segments[bIndex+1] + k
+			bIndex += 2
+			if bIndex >= len(b.segments) {
+				return currentChainA, currentChainB
+			}
+		}
+		//save b position and offset for later -- the next match may need to start checking from here
+		oldBIndex := bIndex
+		oldBOffset := offsetB
+
+		if debug{
+			log.Println("Starting scan at",aIndex/2,bIndex/2,"with offsets",offsetA,offsetB,"up to max",maxBOffset)
+		}
+		//now scan for a match, up to the maximum offset
+		matched := false
+		seedA := a.segments[aIndex]
+		for offsetB <= maxBOffset {
+			//if a match, reset the offsets and step forward
+			if seedA == b.segments[bIndex] {
+				//NOTE: by only considering the first match, this becomes approximate rather than optimal matching
+				if debug{
+					log.Println("HIT! At",aIndex/2,bIndex/2,"of seed",seedA,"when offsets were",offsetA,offsetB)
+				}
+				//an existing chain up to here
+				if chainsA[aSeedIndex] != nil {
+					if debug{
+						log.Println("Hit an existing chain at",aSeedIndex)
+					}
+					//if it's the same match, and part of a longer chain
+					if bIndex/2 == chainsB[aSeedIndex][len(chainsB[aSeedIndex])-1] && len(chainsA[aSeedIndex]) > len(currentChainA) {
+						return currentChainA, currentChainB //they have a better chain already
+					}
+					if debug{
+						log.Println("Ignoring the chain and moving forward.")
+					}
+					//just overwrite otherwise. A bit tricky to re-use an existing chain's tail, and should be very rare.
+					//we've still got the other chain saved. TODO: consider *not* overwriting it in some cases?
+				}
+				//set the chain for this seed
+				currentChainA = append(currentChainA, aSeedIndex)
+				chainsA[aSeedIndex] = currentChainA
+				currentChainB = append(currentChainB, bIndex/2)
+				chainsB[aSeedIndex] = currentChainB
+				offsetA = a.segments[aIndex+1]
+				offsetB = b.segments[bIndex+1]
+				aIndex += 2
+				bIndex += 2
+				matched = true
+				break
+			} else {
+				offsetB += b.segments[bIndex+1] + k
+				bIndex += 2
+				if bIndex >= len(b.segments) {
+					break //try the next a
+				}
+			}
+		}
+		//otherwise, step a and its offset, and reset b to the previous minimum offset position
+		if !matched {
+			offsetA += a.segments[aIndex+1] + k
+			aIndex += 2
+			offsetB = oldBOffset
+			bIndex = oldBIndex
+		}
+	}
+	return currentChainA, currentChainB
 }
 
 type cluster struct {
@@ -1135,16 +1286,17 @@ func (m *SeedMatch) String() string {
 	return s1 + s2
 }
 
-func (m *SeedMatch) LongString(k int) string {
+func (m *SeedMatch) LongString(seedIndex *SeedIndex) string {
 	s := ""
 	aOff := 0
 	bOff := 0
+	k := int(seedIndex.GetSeedLength())
 	for i := 0; i < len(m.MatchA); i++ {
 		pA := aOff + k
 		pB := bOff + k
 		aOff = m.SeqA.GetSeedOffset(m.MatchA[i], k)
 		bOff = m.SeqB.GetSeedOffset(m.MatchB[i], k)
-		s = fmt.Sprint(s, " <", aOff-pA, "/", bOff-pB, "> ", sequence.KmerString(m.SeqA.segments[m.MatchA[i]*2+1], k))
+		s = fmt.Sprint(s, " <", aOff-pA, "/", bOff-pB, "> ", seedIndex.SeedString(m.SeqA.segments[m.MatchA[i]*2+1]))
 	}
 	return s
 }
@@ -1187,13 +1339,13 @@ func (seq *SeedSequence) String() string {
 	}
 	return s
 }
-func (seq *SeedSequence) LongString(k int) string {
+func (seq *SeedSequence) LongString(seedIndex *SeedIndex) string {
 	s := fmt.Sprint(seq.id, ":")
 	for i, v := range seq.segments {
 		if i&1 == 0 {
 			s = s + fmt.Sprint("<", v, ">")
 		} else {
-			s = s + fmt.Sprint(" ", sequence.KmerString(v, k), " ")
+			s = s + fmt.Sprint(" ", seedIndex.SeedString(v), " ")
 		}
 	}
 	return s

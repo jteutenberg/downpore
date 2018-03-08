@@ -11,9 +11,12 @@ type Sequence interface {
 	String() string
 	SubSequence(int, int) Sequence
 	ReverseComplement() Sequence
+	Append(int,Sequence,*string) Sequence
 	Len() int
 	GetOffset() int
+	setOffset(int)
 	GetInset() int
+	setInset(int)
 	KmerAt(int, int) int
 	NextKmer(int, int, int) int
 	ShortKmers(int, bool) []uint16
@@ -58,6 +61,7 @@ func NewByteSequence(id int, seq string, name *string) Sequence {
 	s := byteSequence{data: data, quality: nil, id: id, offset: 0, inset: 0, name: name}
 	return &s
 }
+
 
 func packBytes(seq []byte, data []byte)
 
@@ -130,6 +134,35 @@ func (s *byteSequence) ReverseComplement() Sequence {
 	}
 	rc := byteSequence{data: bs, quality: qs, id: s.id, offset: s.inset, inset: s.offset, name: s.name}
 	return &rc
+}
+
+func (s *byteSequence) Append(id int, other Sequence, name *string) Sequence {
+	str := s.String()+other.String()
+	seq := NewByteSequence(id,str,name)
+	var qs []byte
+	if s.quality != nil {
+		qs = make([]byte, seq.Len())
+		copy(qs, s.quality)
+		copy(qs[len(s.quality):],other.Quality())
+	}
+	seq.SetQuality(qs)
+	seq.setOffset(s.GetOffset())
+	seq.setInset(other.GetInset())
+	return seq
+}
+func (s *packedSequence) Append(id int, other Sequence, name *string) Sequence {
+	str := s.String()+other.String()
+	seq := NewPackedSequence(id,str,name)
+	var qs []byte
+	if s.quality != nil {
+		qs = make([]byte, seq.Len())
+		copy(qs, s.quality)
+		copy(qs[len(s.quality):],other.Quality())
+	}
+	seq.setOffset(s.GetOffset())
+	seq.setInset(other.GetInset())
+	seq.SetQuality(qs)
+	return seq
 }
 
 func (s *packedSequence) ReverseComplement() Sequence {
@@ -209,6 +242,9 @@ func (s *packedSequence) String() string {
 	}
 	b := s.data[len(s.data)-1]
 	last := 8 - s.finalLen*2
+	if last == 8 {
+		last = 0 //actually 0 final length, so print whole 4-byte block
+	}
 	for j >= last {
 		buf[count] = (b >> uint(j)) & 3
 		count++
@@ -358,11 +394,25 @@ func (s *packedSequence) GetOffset() int {
 	return s.offset
 }
 
+func (s *byteSequence) setOffset(offset int) {
+	s.offset = offset
+}
+func (s *packedSequence) setOffset(offset int) {
+	s.offset = offset
+}
+
 func (s *byteSequence) GetInset() int {
 	return s.inset
 }
 func (s *packedSequence) GetInset() int {
 	return s.inset
+}
+
+func (s *byteSequence) setInset(inset int) {
+	s.inset = inset
+}
+func (s *packedSequence) setInset(inset int) {
+	s.inset = inset
 }
 
 func (s *byteSequence) KmerAt(index, k int) int {
