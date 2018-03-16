@@ -77,7 +77,7 @@ func (set *IntSet) Add(x uint) {
 	bit := Bit << subIndex
 	if int(index) >= len(set.vs) {
 		newVs := make([]uint64, index+1)
-		copy(newVs,set.vs)
+		copy(newVs, set.vs)
 		set.vs = newVs
 	}
 	old := set.vs[index]
@@ -220,7 +220,7 @@ func (set *IntSet) Union(other *IntSet) {
 	if end > set.end {
 		set.end = end
 		newVs := make([]uint64, set.end+1)
-		copy(newVs,set.vs)
+		copy(newVs, set.vs)
 		set.vs = newVs
 	}
 	for i := start; i <= end; i++ {
@@ -228,14 +228,20 @@ func (set *IntSet) Union(other *IntSet) {
 	}
 }
 
-func getSoftUnion8Asm(vs []uint64) (uint64, int)
-func getSoftUnion16Asm(vs []uint64) (uint64, int)
+//gets union, and first three soft-unions (up to 4+ shared sets)
+func getSoftUnion4Asm(vs []uint64) (uint64, uint64, uint64, uint64)
 
-func getSoftUnion8Fast(vs []uint64) (uint64, int) {
+//gets soft unions with 5-8+ shared sets
+func getSoftUnion8Asm(vs []uint64) (uint64, uint64, uint64, uint64)
+
+//gets soft union with 16+ shared sets
+func getSoftUnion16Asm(vs []uint64) (uint64, uint64, uint64, uint64)
+
+func getSoftUnion8(vs []uint64) (uint64, int) {
 	zeroCount := 0 //empty vs
 	n := len(vs)
 	maxZeroes := n - 8
-	var v,v2,v3,v4,v5,v6,v7,v8 uint64
+	var v, v2, v3, v4, v5, v6, v7, v8 uint64
 	for j := 0; j < n && zeroCount <= maxZeroes; j++ {
 		m := vs[j]
 		v8 |= v7 & m
@@ -253,11 +259,11 @@ func getSoftUnion8Fast(vs []uint64) (uint64, int) {
 	return v8, zeroCount
 }
 
-func getSoftUnion16Fast(vs []uint64) (uint64, int) {
+func getSoftUnion16(vs []uint64) (uint64, int) {
 	zeroCount := 0 //empty vs
 	n := len(vs)
 	maxZeroes := n - 16
-	var v,v2,v3,v4,v5,v6,v7,v8,v9,v10,v11,v12,v13,v14,v15,v16 uint64
+	var v, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16 uint64
 	for j := 0; j < n && zeroCount <= maxZeroes; j++ {
 		m := vs[j]
 		v16 |= v15 & m
@@ -280,82 +286,12 @@ func getSoftUnion16Fast(vs []uint64) (uint64, int) {
 			zeroCount++
 		}
 	}
-	return v16,zeroCount
+	return v16, zeroCount
 }
 
-//get all bits shared by 8+ entries in vs at the given index
-func getSoftUnion8(vs [][]uint64, lengths []uint, index uint) (uint64, int) {
-	zeroCount := 0 //empty vs
-	n := len(vs)
-	maxZeroes := n - 8
-	var v,v2,v3,v4,v5,v6,v7,v8 uint64
-	for j := 0; j < n && zeroCount <= maxZeroes; j++ {
-		if lengths[j] > index {
-			m := vs[j][index]
-			v8 |= v7 & m
-			v7 |= v6 & m
-			v6 |= v5 & m
-			v5 |= v4 & m
-			v4 |= v3 & m
-			v3 |= v2 & m
-			v2 |= v & m
-			v |= m
-			if m == 0 {
-				zeroCount++
-			}
-		} else {
-			zeroCount++
-		}
-	}
-	return v8,zeroCount
-}
-
-func getSoftUnion16(vs [][]uint64, lengths []uint, index uint) (uint64, int) {
-	zeroCount := 0 //empty vs
-	n := len(vs)
-	maxZeroes := n - 16
-	var v,v2,v3,v4,v5,v6,v7,v8,v9,v10,v11,v12,v13,v14,v15,v16 uint64
-	for j := 0; j < n && zeroCount <= maxZeroes; j++ {
-		if lengths[j] > index {
-			m := vs[j][index]
-			v16 |= v15 & m
-			v15 |= v14 & m
-			v14 |= v13 & m
-			v13 |= v12 & m
-			v12 |= v11 & m
-			v11 |= v10 & m
-			v10 |= v9 & m
-			v9 |= v8 & m
-			v8 |= v7 & m
-			v7 |= v6 & m
-			v6 |= v5 & m
-			v5 |= v4 & m
-			v4 |= v3 & m
-			v3 |= v2 & m
-			v2 |= v & m
-			v |= m
-			if m == 0 {
-				zeroCount++
-			}
-		} else {
-			zeroCount++
-		}
-	}
-	return v16,zeroCount
-}
-
-//GetSharedIDsFast rounds minCount down to the nearest: 1,2,3,4,8,16 or 32 then
-//performs an optimised version of GetSharedIDs
-func GetSharedIDsFast(sets []*IntSet, minCount int) (ids []uint) {
+func GetSharedIDs(sets []*IntSet, minCount int, fast bool) (ids []uint) {
 	if minCount > 24 {
-		return GetSharedIDs(sets, minCount)
-	}
-	if minCount >= 16 {
-		minCount = 16
-	} else if minCount >= 8 {
-		minCount = 8
-	} else if minCount > 4 {
-		minCount = 4
+		fast = false
 	}
 	n := len(sets)
 	start := uint(len(sets[0].vs))
@@ -364,7 +300,7 @@ func GetSharedIDsFast(sets []*IntSet, minCount int) (ids []uint) {
 	vs := make([][]uint64, n)
 	for i := 0; i < n; i++ {
 		vs[i] = sets[i].vs
-		lens[i] = uint(sets[i].end+1)
+		lens[i] = uint(sets[i].end + 1)
 		if sets[i].start < start {
 			start = sets[i].start
 		}
@@ -372,91 +308,72 @@ func GetSharedIDsFast(sets []*IntSet, minCount int) (ids []uint) {
 			end = sets[i].end
 		}
 	}
-	maxZeroes := n - minCount
-	nextVs := make([]uint64,n)
-	for i := start; i <= end && maxZeroes >= 0; i++ {
-		//c := 0
-		//for j := n-1; j >= 0; j-- {
+	nextVs := make([]uint64, n)
+	for i := start; i <= end; i++ {
 		for j := 0; j < n; j++ {
-			/*if lens[j] <= i {
-				//remove this set permanently
-				n--
-				vs[j] = vs[n]
-				lens[j] = lens[n]
-				vs = vs[:n]
-				lens = lens[:n]
-				nextVs = nextVs[:n]
-				maxZeroes = n-minCount
-			} else {*/
 			if lens[j] > i {
-				nv := vs[j][i]
-				//if nv != 0 {
-					nextVs[j] =  nv
-					//c++
-				//} else if j+c < minCount {
-				//	break
-				//}
+				nextVs[j] = vs[j][i]
 			} else {
 				nextVs[j] = 0
 			}
 		}
-		//if c < minCount {
-		//	continue
-		//}
-		count := 0
-		var v uint64  //union
-		if minCount == 16 {
-			//v, count = getSoftUnion16Fast(nextVs[:c])
-			v, count = getSoftUnion16Fast(nextVs)
-		} else if minCount == 8 {
-			v, count = getSoftUnion8Fast(nextVs)
-			//v, count = getSoftUnion8Fast(nextVs[:c])
-		} else {
-			var v2 uint64 //all bits that appear 2+ times
-			var v3 uint64 // "" 3+ times
-			var v4 uint64 // "" 4+ times
-			//find how many zeroed longs we have here, build up the union as we go
-			for j := 0; j < n && count <= maxZeroes; j++ {
-				if lens[j] > i {
-					n := vs[j][i]
-					v4 |= v3 & n
-					v3 |= v2 & n
-					v2 |= v & n
-					v |= n
-					if n == 0 {
-						count++
-					}
-				} else {
-					count++
-				}
-			}
-			if minCount >= 3 {
-				if minCount >= 4 {
-					v = v4
-				} else {
-					v = v3
-				}
+		var v uint64 //union
+		if minCount >= 13 {
+			v13, v14, v15, v16 := getSoftUnion16Asm(nextVs)
+			if minCount >= 16 {
+				v = v16
+			} else if minCount == 15 {
+				v = v15
+			} else if minCount == 14 {
+				v = v14
 			} else {
+				v = v13
+			}
+		} else if minCount >= 8 {
+			v5, v6, v7, v8 := getSoftUnion8Asm(nextVs)
+			if minCount >= 8 {
+				v = v8
+			} else if minCount == 7 {
+				v = v7
+			} else if minCount == 6 {
+				v = v6
+			} else {
+				v = v5
+			}
+		} else {
+			v1, v2, v3, v4 := getSoftUnion4Asm(nextVs)
+			if minCount == 4 {
+				v = v4
+			} else if minCount == 3 {
+				v = v3
+			} else if minCount == 2 {
 				v = v2
+			} else {
+				v = v1
 			}
 		}
 		//extract ids from v
 		if v != 0 {
 			if ids == nil {
-				ids = make([]uint,0,20)
+				ids = make([]uint, 0, 20)
 			}
-			var shifted uint
-			for v != 0 {
-				zs := uint(bits.TrailingZeros64(v))
-				ids = append(ids, (i << 6) + shifted + zs)
-				v = v >> (zs+1)
-				shifted += zs+1
+			if fast {
+				var shifted uint
+				for v != 0 {
+					zs := uint(bits.TrailingZeros64(v))
+					ids = append(ids, (i<<6)+shifted+zs)
+					v = v >> (zs + 1)
+					shifted += zs + 1
+				}
+			} else {
+				ids = addSoftUnionIDs(v, nextVs, minCount, ids, uint(i<<6))
 			}
 		}
 	}
 	return ids
 }
 
+/*
 //GetSharedIDs IDs that are contained by at least
 //minCount of the provided sets
 func GetSharedIDs(sets []*IntSet, minCount int) []uint {
@@ -524,7 +441,7 @@ func GetSharedIDs(sets []*IntSet, minCount int) []uint {
 			zs := uint(bits.TrailingZeros64(v))
 			bit <<= zs
 			v >>= zs
-			for j := zs; /*uint(0);*/ j < 64 && v != 0; j++ {
+			for j := zs; j < 64 && v != 0; j++ {
 				if (Bit & v) != 0 { //a member of the union
 					count = 0
 					//find which sets contained this one (make sure we ignore shortened vs slices)
@@ -547,6 +464,38 @@ func GetSharedIDs(sets []*IntSet, minCount int) []uint {
 				bit <<= 1
 			}
 		}
+	}
+	return ids
+}*/
+
+//validate each set bit in v against the original vs
+func addSoftUnionIDs(v uint64, vs []uint64, minCount int, ids []uint, offset uint) []uint {
+	bit := Bit
+	zs := uint(bits.TrailingZeros64(v))
+	bit <<= zs
+	v >>= zs
+	n := len(vs)
+	for j := zs; j < 64 && v != 0; j++ {
+		if (Bit & v) != 0 { //a member of the union
+			count := 0
+			//find which sets contained this one (make sure we ignore shortened vs slices)
+			for k := 0; k < n; k++ {
+				if (vs[k] & bit) != 0 {
+					count++
+					if count >= minCount { //this bit has appeared in enough sets
+						if ids == nil {
+							ids = make([]uint, 0, 20)
+						}
+						ids = append(ids, uint(offset+j))
+						break
+					}
+				} else if n-k+count <= minCount {
+					break
+				}
+			}
+		}
+		v >>= 1
+		bit <<= 1
 	}
 	return ids
 }

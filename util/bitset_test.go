@@ -63,7 +63,7 @@ func Test2SharedIDs(test *testing.T) {
 			sets[j].Add(uint(i))
 		}
 	}
-	a := GetSharedIDs(sets, 16)
+	a := GetSharedIDs(sets, 16, false)
 	if len(a) != c16 {
 		test.Error("Incorrect number of ids found:",len(a),"vs extected",c16)
 	}
@@ -72,7 +72,7 @@ func Test2SharedIDs(test *testing.T) {
 			test.Error("Incorrect id",id," in",counts[id],"sets but should be in 16")
 		}
 	}
-	a = GetSharedIDsFast(sets, 16)
+	a = GetSharedIDs(sets, 16, true)
 	if len(a) != c16 {
 		test.Error("Incorrect (fast) number of ids found:",len(a),"vs extected",c16)
 		test.Error(a)
@@ -82,7 +82,26 @@ func Test2SharedIDs(test *testing.T) {
 			test.Error("Incorrect (fast) id",id," in",counts[id],"sets but should be in 16")
 		}
 	}
-	a = GetSharedIDs(sets, 8)
+	a = GetSharedIDs(sets, 15, false)
+	if len(a) != c16 {
+		test.Error("Incorrect number of ids found:",len(a),"vs extected",c16)
+	}
+	for _, id := range a {
+		if counts[id] != 16 {
+			test.Error("Incorrect id",id," in",counts[id],"sets but should be in 16")
+		}
+	}
+	a = GetSharedIDs(sets, 15, true)
+	if len(a) != c16 {
+		test.Error("Incorrect (fast) number of ids found:",len(a),"vs extected",c16)
+		test.Error(a)
+	}
+	for _, id := range a {
+		if counts[id] != 16 {
+			test.Error("Incorrect (fast) id",id," in",counts[id],"sets but should be in 16")
+		}
+	}
+	a = GetSharedIDs(sets, 8, false)
 	if len(a) != c8+c16 {
 		test.Error("Incorrect number of ids found:",len(a),"vs extected",c8)
 	}
@@ -91,7 +110,7 @@ func Test2SharedIDs(test *testing.T) {
 			test.Error("Incorrect id",id," in",counts[id],"sets but should be in 8")
 		}
 	}
-	a = GetSharedIDsFast(sets, 8)
+	a = GetSharedIDs(sets, 8, true)
 	if len(a) != c8+c16 {
 		test.Error("Incorrect (fast) number of ids found:",len(a),"vs extected",c8)
 		test.Error(a)
@@ -99,6 +118,44 @@ func Test2SharedIDs(test *testing.T) {
 	for _, id := range a {
 		if counts[id] < 8 {
 			test.Error("Incorrect (fast) id",id," in",counts[id],"sets but should be in 8")
+		}
+	}
+	a = GetSharedIDs(sets, 4, false)
+	if len(a) != c8+c16+c4 {
+		test.Error("Incorrect number of ids found:",len(a),"vs extected",c4)
+	}
+	for _, id := range a {
+		if counts[id] < 4 {
+			test.Error("Incorrect id",id," in",counts[id],"sets but should be in 4")
+		}
+	}
+	a = GetSharedIDs(sets, 4, true)
+	if len(a) != c8+c16+c4 {
+		test.Error("Incorrect (fast) number of ids found:",len(a),"vs extected",c4)
+		test.Error(a)
+	}
+	for _, id := range a {
+		if counts[id] < 4 {
+			test.Error("Incorrect (fast) id",id," in",counts[id],"sets but should be in 4")
+		}
+	}
+	a = GetSharedIDs(sets, 2, false)
+	if len(a) != c8+c16+c4+c2 {
+		test.Error("Incorrect number of ids found:",len(a),"vs extected",c2)
+	}
+	for _, id := range a {
+		if counts[id] < 2 {
+			test.Error("Incorrect id",id," in",counts[id],"sets but should be in 2")
+		}
+	}
+	a = GetSharedIDs(sets, 2, true)
+	if len(a) != c8+c16+c4+c2 {
+		test.Error("Incorrect (fast) number of ids found:",len(a),"vs extected",c2)
+		test.Error(a)
+	}
+	for _, id := range a {
+		if counts[id] < 2 {
+			test.Error("Incorrect (fast) id",id," in",counts[id],"sets but should be in 2")
 		}
 	}
 }

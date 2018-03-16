@@ -18,9 +18,9 @@ type mapCommand struct {
 
 func NewMapCommand() Command {
 	args, alias, desc := MakeArgs(
-		[]string{"input", "reference","circular","k","num_workers"},
-		[]string{"", "","true","10","4"},
-		[]string{"Fasta/fastq input file", "A fasta file containing a reference sequence to align against","Whether the reference genome is circular","Length of seeds in bases","The number of worker process to use for mapping"})
+		[]string{"input", "reference", "circular", "k", "query_size", "chunk_size", "seed_rate", "num_workers"},
+		[]string{"", "", "true", "11", "1000", "10000", "75", "4"},
+		[]string{"Fasta/fastq input file", "A fasta file containing a reference sequence to align against", "Whether the reference genome is circular", "Length of seeds in bases", "The number of bases to query at a time", "The number of bases for reference index chunks", "The maximum number of bases between seeds in the reference", "The number of worker process to use for mapping"})
 	cons := mapCommand{args: args, alias: alias, desc: desc}
 	return &cons
 }
@@ -40,7 +40,9 @@ func (com *mapCommand) Run(args map[string]string) {
 	numWorkers := ParseInt(args["num_workers"])
 	minLength := 500
 	circular := ParseBool(args["circular"])
-	overlap := 1000
+	querySize := ParseInt(args["query_size"])
+	chunkSize := ParseInt(args["chunk_size"])
+	seedRate := ParseInt(args["seed_rate"])
 
 	f, _ := os.Create("./cprof")
 	pprof.StartCPUProfile(f)
@@ -54,7 +56,7 @@ func (com *mapCommand) Run(args map[string]string) {
 	//aim for fairly low frequency: about 1:200000 bases?
 	targetFreq := 0.000005
 	for i, count := range kmerCounts {
-		freq := float64(count)/tf
+		freq := float64(count) / tf
 		if freq <= targetFreq {
 			values[i] = targetFreq - freq
 		} else {
@@ -71,7 +73,7 @@ func (com *mapCommand) Run(args map[string]string) {
 		values[x] = 10000
 	}
 
-	mapper := mapping.NewMapper(reference, circular, uint(k), values, 75, overlap, 4)
+	mapper := mapping.NewMapper(reference, circular, uint(k), values, seedRate, querySize, chunkSize, 4)
 	//read each sequence, map against reference
 	seqSet = sequence.NewFastaSequenceSet(args["input"], minLength, 1, false, false)
 	seqs := seqSet.GetSequences()
@@ -89,11 +91,6 @@ func (com *mapCommand) Run(args map[string]string) {
 	go func() {
 		for maps := range results {
 			if len(maps) > 0 {
-				/*fmt.Print(seqSet.GetName(maps[0].Query.GetID()), " ")
-				for _, m := range maps {
-					fmt.Print(m.Start, "-", m.End, "(", m.RC, ") ")
-				}
-				fmt.Println(" Len:",maps[0].Query.Len())*/
 				for _, m := range maps {
 					fmt.Println(mapper.AsString(m))
 				}
@@ -115,11 +112,10 @@ func (com *mapCommand) Run(args map[string]string) {
 	}
 	close(results)
 	<-allDone
-	os.Stderr.WriteString(fmt.Sprintln("Uniquely mapped:",mapped))
-	os.Stderr.WriteString(fmt.Sprintln("Multiple mappings:",multiple))
-	os.Stderr.WriteString(fmt.Sprintln("total:",total))
-	os.Stderr.WriteString(fmt.Sprintln("Unmapped:",unmapped))
+	os.Stderr.WriteString(fmt.Sprintln("Uniquely mapped:", mapped))
+	os.Stderr.WriteString(fmt.Sprintln("Multiple mappings:", multiple))
+	os.Stderr.WriteString(fmt.Sprintln("total:", total))
+	os.Stderr.WriteString(fmt.Sprintln("Unmapped:", unmapped))
 	pprof.StopCPUProfile()
 	f.Close()
 }
-

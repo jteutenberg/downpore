@@ -11,12 +11,12 @@ import (
 //SeedIndex is a set of reads in gapped-seed format ready for querying
 type SeedIndex struct {
 	seedSize     uint
-	kmers        []bool //which k-mers have seeds in this index
+	kmers        []bool          //which k-mers have seeds in this index
 	sequences    []*SeedSequence //list of all sequences
 	sequenceSets []*util.IntSet  //list of seed -> set of sequences (indices)
 	seedSets     []*util.IntSet  //list of sequence -> set of seeds
-	kmerMap      []int //maps kmer->seed
-	seedMap      []int //maps seed->kmer
+	kmerMap      []int           //maps kmer->seed
+	seedMap      []int           //maps seed->kmer
 	size         int
 	lock         *sync.Mutex
 }
@@ -27,7 +27,7 @@ func NewSeedIndex(k uint) *SeedIndex {
 		size *= 4
 	}
 	var lock sync.Mutex
-	sg := SeedIndex{kmers:make([]bool, size), kmerMap: make([]int, size), seedSize: k, sequences: make([]*SeedSequence, 0, 100000), sequenceSets: make([]*util.IntSet, 0, 100000), seedSets: make([]*util.IntSet, 0, 100000), size: 0, lock: &lock}
+	sg := SeedIndex{kmers: make([]bool, size), kmerMap: make([]int, size), seedSize: k, sequences: make([]*SeedSequence, 0, 100000), sequenceSets: make([]*util.IntSet, 0, 100000), seedSets: make([]*util.IntSet, 0, 100000), size: 0, lock: &lock}
 	return &sg
 }
 
@@ -38,11 +38,11 @@ func (g *SeedIndex) NewSeedSequence(seq sequence.Sequence) *SeedSequence {
 	for i := 0; i < k; i++ {
 		mask = (mask << 2) | 3
 	}
-	count := seq.CountKmers(seq.Len(),k, mask, g.kmers)
+	count := seq.CountKmers(seq.Len(), k, mask, g.kmers)
 	segments := make([]int, count*2+1)
 	seq.WriteSegments(segments, k, mask, g.kmers)
 	//translate the k-mers into seeds
-	for i := 1; i < len(segments); i+=2 {
+	for i := 1; i < len(segments); i += 2 {
 		segments[i] = g.kmerMap[segments[i]]
 	}
 	name := seq.GetName()
@@ -51,7 +51,7 @@ func (g *SeedIndex) NewSeedSequence(seq sequence.Sequence) *SeedSequence {
 }
 
 func (g *SeedIndex) SeedString(seed int) string {
-	return sequence.KmerString(g.seedMap[seed],int(g.seedSize))
+	return sequence.KmerString(g.seedMap[seed], int(g.seedSize))
 }
 
 //AddSeeds re-uses any seeds in the index, adding additional seeds as required to
@@ -124,7 +124,7 @@ func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float6
 				g.kmers[seed] = true
 				g.kmerMap[seed] = g.size
 				for len(g.sequenceSets) <= g.size {
-					g.sequenceSets = append(g.sequenceSets,util.NewIntSet())
+					g.sequenceSets = append(g.sequenceSets, util.NewIntSet())
 					g.seedMap = append(g.seedMap, -1)
 				}
 				g.seedMap[g.size] = int(seed)
@@ -135,7 +135,7 @@ func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float6
 				g.kmers[seed] = true
 				g.kmerMap[seed] = g.size
 				for len(g.sequenceSets) <= g.size {
-					g.sequenceSets = append(g.sequenceSets,util.NewIntSet())
+					g.sequenceSets = append(g.sequenceSets, util.NewIntSet())
 					g.seedMap = append(g.seedMap, -1)
 				}
 				g.seedMap[g.size] = int(seed)
@@ -159,14 +159,14 @@ func (g *SeedIndex) AddSingleSeeds(seq sequence.Sequence, seedRate int, ranks []
 
 	//TODO: feed each subsequence to a goroutine
 	for i := 0; i < seq.Len()-seedRate; i += seedRate {
-		count := seq.CountKmersBetween(i,i+seedRate,1, k, mask, g.kmers)
+		count := seq.CountKmersBetween(i, i+seedRate, 1, k, mask, g.kmers)
 		if count == 0 {
-			end := i+seedRate
+			end := i + seedRate
 			//find the  best seed
 			kmer := seq.KmerAt(i, k)
 			bestValue := ranks[kmer]
 			bestKmer := kmer
-			for j := i+k; j < end; j++ {
+			for j := i + k; j < end; j++ {
 				kmer = seq.NextKmer(kmer, mask, j)
 				value := ranks[kmer]
 				if value < bestValue {
@@ -179,7 +179,7 @@ func (g *SeedIndex) AddSingleSeeds(seq sequence.Sequence, seedRate int, ranks []
 				g.kmers[bestKmer] = true
 				g.kmerMap[bestKmer] = g.size
 				for len(g.sequenceSets) <= g.size {
-					g.sequenceSets = append(g.sequenceSets,util.NewIntSet())
+					g.sequenceSets = append(g.sequenceSets, util.NewIntSet())
 					g.seedMap = append(g.seedMap, -1)
 				}
 				g.seedMap[g.size] = bestKmer
@@ -209,7 +209,7 @@ func (g *SeedIndex) NewAllSeedSequence(seq sequence.Sequence) *SeedSequence {
 			g.kmers[kmer] = true
 			g.kmerMap[kmer] = g.size
 			for len(g.sequenceSets) <= g.size {
-				g.sequenceSets = append(g.sequenceSets,util.NewIntSet())
+				g.sequenceSets = append(g.sequenceSets, util.NewIntSet())
 				g.seedMap = append(g.seedMap, -1)
 			}
 			g.seedMap[g.size] = kmer
@@ -273,7 +273,7 @@ func (g *SeedIndex) AddSequence(seq *SeedSequence) {
 			}
 		}
 	}
-	seedSet := util.NewIntSetCapacity(maxSeed+1)
+	seedSet := util.NewIntSetCapacity(maxSeed + 1)
 	for i, seed := range seq.segments {
 		if (i & 1) == 1 {
 			seedSet.Add(uint(seed))
@@ -325,7 +325,7 @@ func (g *SeedIndex) Matches(query *SeedSequence, hitFraction float64) []uint {
 		return make([]uint, 0, 0)
 	}
 	minCount := int(hitFraction*float64(len(allSeedSets)) + 0.5)
-	return util.GetSharedIDsFast(allSeedSets, minCount)
+	return util.GetSharedIDs(allSeedSets, minCount, true)
 }
 
 //AddSequence processes all sequences using the provided index but not adding
