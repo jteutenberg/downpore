@@ -262,25 +262,35 @@ func (g *SeedIndex) GetNumSequences() uint {
 
 func (g *SeedIndex) AddSequence(seq *SeedSequence) {
 	g.lock.Lock()
-	index := uint(len(g.sequences))
 	g.sequences = append(g.sequences, seq)
 	maxSeed := 0
-	for i, seed := range seq.segments {
-		if (i & 1) == 1 {
-			g.sequenceSets[seed].Add(index)
-			if seed > maxSeed {
-				maxSeed = seed
-			}
+	for i := 1; i < len(seq.segments); i+=2 {
+		seed := seq.segments[i]
+		//g.sequenceSets[seed].Add(index)
+		if seed > maxSeed {
+			maxSeed = seed
 		}
 	}
 	seedSet := util.NewIntSetCapacity(maxSeed + 1)
-	for i, seed := range seq.segments {
-		if (i & 1) == 1 {
-			seedSet.Add(uint(seed))
-		}
+	for i := 1; i < len(seq.segments); i+=2 {
+		seed := seq.segments[i]
+		seedSet.Add(uint(seed))
 	}
 	g.seedSets = append(g.seedSets, seedSet)
 	g.lock.Unlock()
+}
+
+func (g *SeedIndex) IndexSequences() {
+	for i := len(g.sequences)-1; i >= 0; i-- {
+		//go in reverse order so we get the highest ids first
+		s := g.sequences[i]
+		ind := uint(i)
+		//TODO: how to multi-thread this, locking some bitsets?
+		for j := 1; j < len(s.segments); j+=2 {
+			seed := s.segments[j]
+			g.sequenceSets[seed].Add(ind)
+		}
+	}
 }
 
 func (g *SeedIndex) RemoveSequences() {

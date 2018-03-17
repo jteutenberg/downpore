@@ -126,7 +126,7 @@ func (lap *overlapper) PrepareQueries(numSeeds int, seedLimit int, kmerValues []
 	for _, s := range cached {
 		q := SeedQuery{queryID, s.GetID(), lap.index.NewSeedSequence(s), true, false}
 		queries = append(queries, &q)
-		rc := SeedQuery{queryID, q.SequenceID, q.Query.ReverseComplement(k), true, true}
+		rc := SeedQuery{queryID, q.SequenceID, q.Query.ReverseComplement(k,lap.index), true, true}
 		queryID++
 		queries = append(queries, &rc)
 	}
@@ -183,8 +183,7 @@ func (lap *overlapper) AddSequences(seqs <-chan sequence.Sequence) {
 					} else {
 						newFirstGap := s.GetNextSeedOffset(prevSeedIndex-1, k) - k
 						lengthInBases += s.GetSeedOffsetFromEnd(prevSeedIndex, k) + k + newFirstGap
-						//fmt.Println("total offset:",totalOffset,"less gap",newFirstGap,"plus length",lengthInBases,"should equal total length",s.GetLength(),". Note: actual seed offset is",s.GetSeedOffset(prevSeedIndex,k),"and offset from end is",s.GetSeedOffsetFromEnd(prevSeedIndex,k))
-						lap.index.AddSequence(s.SubSequence(prevSeedIndex, s.GetNumSeeds()-1, lengthInBases, totalOffset-newFirstGap, 0)) //s.GetLength()-totalOffset+newFirstGap-lengthInBases))
+						lap.index.AddSequence(s.SubSequence(prevSeedIndex, s.GetNumSeeds()-1, lengthInBases, totalOffset-newFirstGap, 0))
 					}
 					break
 				}
@@ -215,6 +214,7 @@ func (lap *overlapper) AddSequences(seqs <-chan sequence.Sequence) {
 			}
 		}
 	}
+	lap.index.IndexSequences()
 }
 
 func (lap *overlapper) FindOverlaps(queries []*SeedQuery) <-chan *seeds.SeedMatch {
@@ -254,9 +254,13 @@ func (lap *overlapper) matchWorker(input <-chan *SeedQuery, output chan<- *seeds
 		matches := lap.index.Matches(q.Query, lap.hitFraction)
 		minMatches := int(lap.hitFraction*float64(q.Query.GetNumSeeds()) + 0.5)
 		for _, match := range matches {
+			matchSet := lap.index.GetSeedSet(match)
+			if matchSet.CountIntersectionTo(seedSet, minMatches) < uint(minMatches) {
+				continue
+			}
 			m := lap.index.GetSeedSequence(match)
 			//match is an index in the seed index, the sequence ID is external
-			sMatches := m.Match(q.Query, seedSet, lap.index.GetSeedSet(match), minMatches, k)
+			sMatches := m.Match(q.Query, seedSet, matchSet, minMatches, k)
 			if sMatches != nil {
 				for _, sMatch := range sMatches {
 					sMatch.QueryID = q.ID

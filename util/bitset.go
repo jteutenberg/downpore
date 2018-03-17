@@ -329,7 +329,7 @@ func GetSharedIDs(sets []*IntSet, minCount int, fast bool) (ids []uint) {
 			} else {
 				v = v13
 			}
-		} else if minCount >= 8 {
+		} else if minCount >= 5 {
 			v5, v6, v7, v8 := getSoftUnion8Asm(nextVs)
 			if minCount >= 8 {
 				v = v8

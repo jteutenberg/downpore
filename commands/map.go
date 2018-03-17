@@ -5,9 +5,7 @@ import (
 	"github.com/jteutenberg/downpore/mapping"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util/sequtil"
-	"log"
 	"os"
-	"runtime/pprof"
 )
 
 type mapCommand struct {
@@ -44,8 +42,6 @@ func (com *mapCommand) Run(args map[string]string) {
 	chunkSize := ParseInt(args["chunk_size"])
 	seedRate := ParseInt(args["seed_rate"])
 
-	f, _ := os.Create("./cprof")
-	pprof.StartCPUProfile(f)
 	kmerCounts := sequtil.KmerOccurrences(seqSet.GetSequences(), k, numWorkers)
 	values := make([]float64, len(kmerCounts))
 	var tot uint64
@@ -64,7 +60,7 @@ func (com *mapCommand) Run(args map[string]string) {
 		}
 	}
 
-	log.Println("K-mer counting complete. Preparing to start indexing and querying...")
+	os.Stderr.WriteString("K-mer counting complete. Preparing to start indexing and querying...\n")
 	bottom, top := sequtil.TopOccurrences(kmerCounts, uint(k), len(kmerCounts)/100, len(kmerCounts)/50)
 	for _, x := range bottom {
 		values[x] = 10000
@@ -116,6 +112,4 @@ func (com *mapCommand) Run(args map[string]string) {
 	os.Stderr.WriteString(fmt.Sprintln("Multiple mappings:", multiple))
 	os.Stderr.WriteString(fmt.Sprintln("total:", total))
 	os.Stderr.WriteString(fmt.Sprintln("Unmapped:", unmapped))
-	pprof.StopCPUProfile()
-	f.Close()
 }

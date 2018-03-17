@@ -10,6 +10,8 @@ import (
 	"math"
 	"sync"
 	"time"
+	"os"
+	"runtime/pprof"
 )
 
 type overlapCommand struct {
@@ -59,7 +61,6 @@ func (com *overlapCommand) Run(args map[string]string) {
 		values[i] = ratio //replacing values
 	}
 
-	log.Println("Counting complete. Preparing to start indexing and querying...")
 	bottom, top := sequtil.TopOccurrences(kmerCounts, uint(k), len(kmerCounts)/100, len(kmerCounts)/50)
 	for _, x := range bottom {
 		values[x] = 10000
@@ -67,6 +68,10 @@ func (com *overlapCommand) Run(args map[string]string) {
 	for _, x := range top {
 		values[x] = 10000
 	}
+	log.Println("Counting complete. Starting indexing and querying...")
+
+	f, _ := os.Create("./cprof")
+	pprof.StartCPUProfile(f)
 
 	firstSequence := 0
 	start := time.Now()
@@ -82,7 +87,7 @@ func (com *overlapCommand) Run(args map[string]string) {
 		seqs := seqSet.GetNSequencesFrom(firstSequence, int(math.MaxInt32))
 		var overlapper overlap.Overlapper
 		seedIndex = seeds.NewSeedIndex(uint(k))
-		overlapper = overlap.NewOverlapper(seedIndex, chunkSize, numWorkers, overlapSize, numSeeds/4, 0.25)
+		overlapper = overlap.NewOverlapper(seedIndex, chunkSize, numWorkers, overlapSize, numSeeds, 0.25)
 
 		queries := overlapper.PrepareQueries(numSeeds, seedBatchSize, values, seqs, false)
 		if len(queries) == 0 {
@@ -145,6 +150,8 @@ func (com *overlapCommand) Run(args map[string]string) {
 
 		seedIndex.Destroy()
 	}
+	pprof.StopCPUProfile()
+	f.Close()
 }
 
 func finalCheckWorker(overlaps <-chan []*seeds.SeedMatch, seedIndex *seeds.SeedIndex, seqSet sequence.SequenceSet, overlapSize int, printLock *sync.Mutex, done chan<- bool) {

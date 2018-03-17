@@ -466,5 +466,6 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 			}
 		}
 	}
+	t.index.IndexSequences()
 	done <- true
 }

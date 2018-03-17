@@ -106,6 +106,7 @@ func NewMapper(reference sequence.Sequence, circular bool, k uint, kmerValues []
 		m.index.AddSequence(seq)
 		ind++
 	}
+	m.index.IndexSequences()
 	return &m
 }
 

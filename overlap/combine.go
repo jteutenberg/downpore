@@ -109,7 +109,7 @@ func BuildConsensus(sg *seeds.SeedIndex, overlaps []*seeds.SeedMatch) *SeedConti
 
 	for _, lap := range overlaps {
 		if lap.ReverseComplementQuery {
-			lap.ReverseComplement(k)
+			lap.ReverseComplement(k,sg)
 			//This means SeqA is identical (i.e. by reference) to the rest
 			//But SeqB is a new SeedSequence with reversed edge offsets, etc. <-- it no longer relates to the read
 		}

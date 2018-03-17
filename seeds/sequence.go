@@ -111,7 +111,7 @@ func ReverseComplement(seed uint, k uint) uint {
 	return rc
 }
 
-func (s *SeedSequence) ReverseComplement(k int) *SeedSequence {
+func (s *SeedSequence) ReverseComplement(k int, index *SeedIndex) *SeedSequence {
 	if s.reverseComplement != nil {
 		return s.reverseComplement
 	}
@@ -122,6 +122,7 @@ func (s *SeedSequence) ReverseComplement(k int) *SeedSequence {
 		if i&1 == 0 {
 			seg[n-i] = seed
 		} else {
+			seed = index.seedMap[seed]
 			//A->T is 00 -> 11
 			//C->G is 01 -> 10
 			rc := 0
@@ -129,7 +130,7 @@ func (s *SeedSequence) ReverseComplement(k int) *SeedSequence {
 				rc = (rc << 2) | ((seed ^ 3) & 3)
 				seed = seed >> 2
 			}
-			seg[n-i] = rc
+			seg[n-i] = index.kmerMap[rc]
 		}
 	}
 	//offset/inset remain as indices in the original forward read
@@ -348,11 +349,15 @@ func (seq *SeedSequence) Match(query *SeedSequence, querySet *util.IntSet, seqSe
 	if ms != nil {
 		for _, m := range ms {
 			//convert back from reduced to original sequences' indices
-			for i, pos := range m.MatchA {
-				m.MatchA[i] = qIndex[pos]
+			if qIndex != nil {
+				for i, pos := range m.MatchA {
+					m.MatchA[i] = qIndex[pos]
+				}
 			}
-			for i, pos := range m.MatchB {
-				m.MatchB[i] = sIndex[pos]
+			if sIndex != nil {
+				for i, pos := range m.MatchB {
+					m.MatchB[i] = sIndex[pos]
+				}
 			}
 			m.SeqA = query
 			m.SeqB = seq
@@ -761,9 +766,9 @@ func (c *cluster) rationalise(k int, keepEdges bool) {
 }
 
 //ReverseComplement replaces both SeqA and SeqB, reverses the match and corrects the indices
-func (m *SeedMatch) ReverseComplement(k int) {
-	m.SeqA = m.SeqA.ReverseComplement(k)
-	m.SeqB = m.SeqB.ReverseComplement(k)
+func (m *SeedMatch) ReverseComplement(k int, index *SeedIndex) {
+	m.SeqA = m.SeqA.ReverseComplement(k,index)
+	m.SeqB = m.SeqB.ReverseComplement(k,index)
 	end := len(m.MatchA) - 1
 	lengthA := len(m.SeqA.segments)/2 - 1
 	lengthB := len(m.SeqB.segments)/2 - 1
