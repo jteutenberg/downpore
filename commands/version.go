@@ -7,7 +7,7 @@ import (
 type versionCommand string
 
 func NewVersionCommand() Command {
-	v := versionCommand("0.3")
+	v := versionCommand("0.3.1")
 	return &v
 }
 
