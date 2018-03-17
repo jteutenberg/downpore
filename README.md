@@ -181,22 +181,22 @@ The "ground truth" is taken as the union of mappings made by the two mappers, wi
 
 To begin we consider the overlap between the algorithms: the number of mappings shared by both, those found only by downpore, and found only by minimap2. Here only mappings to more than 500 bases of the reference are included.
 
-Dataset | both | downpore only | minimap2 only
+Dataset | found by both | downpore only | minimap2 only
 ---| ---:| ---:| ---:
 E.Coli | 154k | 5k | 3k 
 Human Ch20 | 245k | 397k | 129k
 
 Note that the human chromosome 20 contains repeats. For example, downpore found unique mapping locations for 219k sequences, and multiple mapping locations for only 21k sequences, but each of the multiple-location hits averaged around 20 mappings per sequence.
 
-The mappings found above are the combination of both true and false positives. We take a "false positive" to be either a mapping with very low identity (say, below 50%) or with identity substantially lower (more than 15% lower) than the best identity for all mappings matched using that subsequence. The two plots below show the distribution of reads' identities for the three categories shown in the table above, and the distribution of differences from the best identities for the same set of reads.
+The mappings found above are the combination of both true and false positives. We take a "false positive" to be either a mapping with very low identity (say, below 50%) or with identity substantially lower (more than 15% lower) than the best identity for all mappings matched using that subsequence. The two plots below show the distribution of reads' identities for the three categories shown in the table above, followed by the distribution of differences from the best identities for the same set of reads.
 
-![E.Coli mapping identity](img/docs_mapping_ecoli_identity.png "E.coli mapping identity")
-![Human ch20 mapping identity](img/docs_mapping_human_identity.png "Human ch20 mapping identity")
+<img src="https://github.com/jteutenberg/downpore/blob/master/img/docs_mapping_ecoli_identity.png" width="400"><img src="https://github.com/jteutenberg/downpore/blob/master/img/docs_mapping_human_identity.png" width="400">
 
-![E.Coli mapping precision](img/docs_mapping_ecoli_deltaidentity.png "E.coli mapping precision")
-![Human ch20 mapping precision](img/docs_mapping_human_deltaidentity.png "Human ch20 mapping precision")
+On E.coli minimap2 finds a few additional mappings that are slightly higher quality than those found by downpore. Conversely, on the repetitive human genome downpore ignores the low identity population of mappings while finding more overall.
 
-The relative identities shown in the distributions above can be used to determine the precision by assigning false positives. The mappings recalled by at least one mapper are used to determine the "total recall". Later we will also calculate a recall value over the input sequences rather than the mappings (i.e. whether at least one valid mapping was found) and we use the term total recall here to distinguish from this.
+<img src="https://github.com/jteutenberg/downpore/blob/master/img/docs_mapping_ecoli_deltaidentity.png" width="400"><img src="https://github.com/jteutenberg/downpore/blob/master/img/docs_mapping_human_deltaidentity.png" width="400">
+
+The relative identities shown in the distributions above can be used to determine the precision by assigning false/true positives. The *mappings* recalled by at least one mapper are used to determine the "total recall". Later we will also calculate a recall value over the *input sequences* rather than the mappings (i.e. whether at least one valid mapping was found) and we use the term total recall here to distinguish from this.
 
 Dataset | downpore total recall | minimap2 total recall | downpore precision | minimap2 precision
 ---| ---:| ---:| ---:| ---:
@@ -205,7 +205,7 @@ Human Ch20 | 79.9% | 40.4% | 99.2% | 96.9%
 
 On E.coli the algorithms have similar results. On the human ch20 data downpore has greater recall and the additional results it finds tend to be slightly higher identity than the additional mappings found by minimap2. 
 
-One fact not shown in the plots is that 19k of the mappings found by both algorithms have a longer version found by minimap 2 -- i.e. the reference sequence identified by downpore is a subsequence of that found by minimap2. In the reverse, only 5k mappings from minimap2 were subsequences of those of downpore. So it can be said that minimap2 is better able to extend mappings out.
+One fact not shown in the plots is that 19k of the mappings found by both algorithms have a longer version found by minimap 2 -- i.e. the reference sequence identified by downpore is a subsequence of that found by minimap2. Conversely, only 5k mappings from minimap2 were subsequences of those of downpore. So it can be said that minimap2 is better able to extend mappings out.
 
 Finally, the low recall of minimap2 is due to the high number of repeat matches. Some use cases are only interested in the presence of at least one good match in which case the values above are not relevant. Below are the (non-total) recall values:
 
@@ -260,12 +260,13 @@ Seeds are chosen greedily so that they do not overlap in the query and minimise 
 ## Minimap2 overlap comparison
 By default, `minimap2 -x ava-ont` uses the full input reads as queries. To make a fair comparison we extracted an query set that is equivalent to that used by downpore and ran `minimap2 -x ava-ont reads.fastq queries.fastq`. For small data with "normal" long reads this gives around a 3-4x speedup.
 
-Ground truth: taken from mapping section.
-...an overlap between a query read `q` and a target read `r` is considered correct if at least one (query) mapped location for `q` lies within at least one mapped region of `r`, and their complementarity matches.
+An overlap between a query read `q` and a target read `r` is considered correct if at least one (query) mapped location for `q` lies within at least one mapped region of `r` (according to the "ground truth" determined in the map command section above), and their complementarity matches.
 
-The time and memory used for the standard minimap2 is listed as "ava" below in case it is of interest.
+The time and memory used for the standard minimap2 is also listed as "ava" below in case it is of interest.
 
 ### E.Coli
+
+These tables will be regenerated soon using the ground truth used in the map command section.
 
 Algorithm | time | memory | recall | precision 
 ---| ---:| ---:| ---:| ---:| ---:
