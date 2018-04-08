@@ -54,20 +54,25 @@ func (com *mapCommand) Run(args map[string]string) {
 	for i, count := range kmerCounts {
 		freq := float64(count) / tf
 		if freq <= targetFreq {
-			values[i] = targetFreq - freq
+			values[i] = 1.0 - (targetFreq - freq)
 		} else {
-			values[i] = freq - targetFreq
+			values[i] = 1.0 - (freq - targetFreq)
 		}
 	}
 
 	os.Stderr.WriteString("K-mer counting complete. Preparing to start indexing and querying...\n")
 	bottom, top := sequtil.TopOccurrences(kmerCounts, uint(k), len(kmerCounts)/100, len(kmerCounts)/50)
 	for _, x := range bottom {
-		values[x] = 10000
+		values[x] = 0
 	}
 	for _, x := range top {
-		values[x] = 10000
+		values[x] = 0
 	}
+	//polyA/T/C/G
+	values[0] = 0
+	values[0xFFFFF] = 0
+	values[0xAAAAA] = 0
+	values[0x55555] = 0
 
 	mapper := mapping.NewMapper(reference, circular, uint(k), values, seedRate, querySize, chunkSize, 4)
 	//read each sequence, map against reference

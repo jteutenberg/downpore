@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
-	"math"
 	"sync"
 )
 
@@ -54,9 +53,13 @@ func (g *SeedIndex) SeedString(seed int) string {
 	return sequence.KmerString(g.seedMap[seed], int(g.seedSize))
 }
 
+func (g *SeedIndex) SeedCount(seed int) uint {
+	return g.sequenceSets[seed].Size()
+}
+
 //AddSeeds re-uses any seeds in the index, adding additional seeds as required to
 //reach at least minSeeds for the sequence.
-func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float64) {
+func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, kmerRanks []float64) {
 	//count the number existing in the index and generate the gapped-seed sequence using those
 	k := int(g.seedSize)
 
@@ -73,7 +76,7 @@ func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float6
 		topN := make([]uint, minSeeds-count, minSeeds-count)
 		topNValues := make([]float64, minSeeds-count, minSeeds-count)
 		for i := 0; i < len(topNValues); i++ {
-			topNValues[i] = math.MaxFloat64
+			topNValues[i] = 0
 		}
 		//add additional seeds, not overlapping existing seeds
 		kmer := seq.KmerAt(0, k)
@@ -81,7 +84,7 @@ func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float6
 		for nextIndex < seq.Len()-k {
 			//find the best k-mer in each k-length block. Resetting if a seed is found.
 			reset := false
-			bestValue := math.MaxFloat64
+			bestValue := 0.0
 			var bestSeed int
 			for i := 0; nextIndex < seq.Len() && i < k; i++ {
 				kmer = seq.NextKmer(kmer, mask, nextIndex)
@@ -90,15 +93,16 @@ func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float6
 					reset = true
 					break
 				}
-				value := ranks[kmer]
-				if value < bestValue {
+				value := kmerRanks[kmer]
+				if value > bestValue {
 					bestValue = value
 					bestSeed = kmer
 				}
 			}
 			if !reset {
 				n := 0
-				for ; n < len(topNValues) && topNValues[n] > bestValue; n++ {
+				//position 0 is the bottom spot. Shuffle down to make room if needed.
+				for ; n < len(topNValues) && topNValues[n] < bestValue; n++ {
 					if n > 0 {
 						topNValues[n-1] = topNValues[n]
 						topN[n-1] = topN[n]
@@ -119,26 +123,26 @@ func (g *SeedIndex) AddSeeds(seq sequence.Sequence, minSeeds int, ranks []float6
 		}
 		// store the top seeds (synchronise here)
 		g.lock.Lock()
-		for _, seed := range topN {
-			if !g.kmers[seed] {
-				g.kmers[seed] = true
-				g.kmerMap[seed] = g.size
+		for _, kmer := range topN {
+			if !g.kmers[kmer] {
+				g.kmers[kmer] = true
+				g.kmerMap[kmer] = g.size
 				for len(g.sequenceSets) <= g.size {
 					g.sequenceSets = append(g.sequenceSets, util.NewIntSet())
 					g.seedMap = append(g.seedMap, -1)
 				}
-				g.seedMap[g.size] = int(seed)
+				g.seedMap[g.size] = int(kmer)
 				g.size++
 			}
-			seed = ReverseComplement(seed, g.seedSize)
-			if !g.kmers[seed] {
-				g.kmers[seed] = true
-				g.kmerMap[seed] = g.size
+			kmer = ReverseComplement(kmer, g.seedSize)
+			if !g.kmers[kmer] {
+				g.kmers[kmer] = true
+				g.kmerMap[kmer] = g.size
 				for len(g.sequenceSets) <= g.size {
 					g.sequenceSets = append(g.sequenceSets, util.NewIntSet())
 					g.seedMap = append(g.seedMap, -1)
 				}
-				g.seedMap[g.size] = int(seed)
+				g.seedMap[g.size] = int(kmer)
 				g.size++
 			}
 		}
@@ -169,7 +173,7 @@ func (g *SeedIndex) AddSingleSeeds(seq sequence.Sequence, seedRate int, ranks []
 			for j := i + k; j < end; j++ {
 				kmer = seq.NextKmer(kmer, mask, j)
 				value := ranks[kmer]
-				if value < bestValue {
+				if value > bestValue {
 					bestValue = value
 					bestKmer = kmer
 				}
@@ -261,10 +265,8 @@ func (g *SeedIndex) GetNumSequences() uint {
 }*/
 
 func (g *SeedIndex) AddSequence(seq *SeedSequence) {
-	g.lock.Lock()
-	g.sequences = append(g.sequences, seq)
 	maxSeed := 0
-	for i := 1; i < len(seq.segments); i+=2 {
+	for i := 1; i < len(seq.segments); i += 2 {
 		seed := seq.segments[i]
 		//g.sequenceSets[seed].Add(index)
 		if seed > maxSeed {
@@ -272,24 +274,28 @@ func (g *SeedIndex) AddSequence(seq *SeedSequence) {
 		}
 	}
 	seedSet := util.NewIntSetCapacity(maxSeed + 1)
-	for i := 1; i < len(seq.segments); i+=2 {
+	for i := 1; i < len(seq.segments); i += 2 {
 		seed := seq.segments[i]
 		seedSet.Add(uint(seed))
 	}
+	g.lock.Lock()
+	g.sequences = append(g.sequences, seq)
 	g.seedSets = append(g.seedSets, seedSet)
 	g.lock.Unlock()
 }
 
-func (g *SeedIndex) IndexSequences() {
-	for i := len(g.sequences)-1; i >= 0; i-- {
-		//go in reverse order so we get the highest ids first
-		s := g.sequences[i]
-		ind := uint(i)
-		//TODO: how to multi-thread this, locking some bitsets?
-		for j := 1; j < len(s.segments); j+=2 {
-			seed := s.segments[j]
-			g.sequenceSets[seed].Add(ind)
-		}
+func (g *SeedIndex) IndexSequences(numWorkers int) {
+	done := make(chan bool, numWorkers)
+	start := 0
+	split := len(g.sequenceSets) / numWorkers
+	for i := 0; i < numWorkers-1; i++ {
+		end := start + split - 1
+		go g.index(start, end, done)
+		start = end + 1
+	}
+	go g.index(start, len(g.sequenceSets), done)
+	for i := 0; i < numWorkers; i++ {
+		<-done
 	}
 }
 
@@ -351,6 +357,20 @@ func AddSequenceWorker(input <-chan sequence.Sequence, index *SeedIndex, output 
 func AddSeedsWorker(input <-chan sequence.Sequence, index *SeedIndex, numSeeds int, kmerValues []float64, done chan<- bool) {
 	for seq := range input {
 		index.AddSeeds(seq, numSeeds, kmerValues)
+	}
+	done <- true
+}
+
+func (g *SeedIndex) index(minSeed, maxSeed int, done chan<- bool) {
+	for i := len(g.sequences) - 1; i >= 0; i-- {
+		ind := uint(i)
+		s := g.sequences[ind]
+		for j := 1; j < len(s.segments); j += 2 {
+			seed := s.segments[j]
+			if seed >= minSeed && seed <= maxSeed {
+				g.sequenceSets[seed].Add(ind)
+			}
+		}
 	}
 	done <- true
 }

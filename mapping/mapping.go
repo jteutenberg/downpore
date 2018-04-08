@@ -3,9 +3,9 @@ package mapping
 import (
 	"fmt"
 	"github.com/jteutenberg/downpore/seeds"
+	"github.com/jteutenberg/downpore/seeds/alignment"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
-	"log"
 	"sort"
 )
 
@@ -21,7 +21,7 @@ type Mapping struct {
 }
 
 type Mapper interface {
-	Map(sequence.Sequence) []*Mapping
+	Map(sequence.Sequence, alignment.Aligner) []*Mapping
 	MapWorker(<-chan sequence.Sequence, chan<- []*Mapping, chan<- bool)
 	AsString(*Mapping) string
 }
@@ -69,7 +69,6 @@ func NewMapper(reference sequence.Sequence, circular bool, k uint, kmerValues []
 	m := mapper{index: seeds.NewSeedIndex(k), reference: reference, edgeSize: edgeSize, circular: circular}
 	//walk the sequence adding 1 seed per seedRate bases
 	m.index.AddSingleSeeds(reference, seedRate, kmerValues)
-	log.Println("Index has", m.index.Size(), "seeds")
 	//index chunks of the reference
 	chunks := make(chan sequence.Sequence, numWorkers*2)
 	seedSeqs := make(chan *seeds.SeedSequence, numWorkers*2)
@@ -106,7 +105,7 @@ func NewMapper(reference sequence.Sequence, circular bool, k uint, kmerValues []
 		m.index.AddSequence(seq)
 		ind++
 	}
-	m.index.IndexSequences()
+	m.index.IndexSequences(numWorkers)
 	return &m
 }
 
@@ -163,9 +162,9 @@ func (m *mapper) isConsistent(left, right *Mapping) bool {
 
 //maps the (potentially noisy) ends
 //if any map end-to-end then these are merged and all others discarded
-func (m *mapper) mapEnds(query sequence.Sequence) (openA, openB, matching []*Mapping) {
-	openA = m.performMapping(query.SubSequence(0, m.edgeSize))
-	openB = m.performMapping(query.SubSequence(query.Len()-m.edgeSize, query.Len()))
+func (m *mapper) mapEnds(query sequence.Sequence, aligner alignment.Aligner) (openA, openB, matching []*Mapping) {
+	openA = m.performMapping(query.SubSequence(0, m.edgeSize),aligner)
+	openB = m.performMapping(query.SubSequence(query.Len()-m.edgeSize, query.Len()),aligner)
 	openA = removeDominated(openA, openA, query.Len())
 	openB = removeDominated(openB, openB, query.Len())
 	updateQuery(openA, query)
@@ -206,11 +205,11 @@ func (m *mapper) matchPairs(openA, openB []*Mapping) (remainingA, remainingB, ma
 
 //search for chimeric boundary given no end-to-end matches
 //this assumes any internal sequence matches either some on the left or some on the right, but not both.
-func (m *mapper) findSplitPoint(query sequence.Sequence, openA, openB []*Mapping, left, right int) {
+func (m *mapper) findSplitPoint(query sequence.Sequence, openA, openB []*Mapping, left, right int, aligner alignment.Aligner) {
 	for right-left >= m.edgeSize {
 		start := (right + left - m.edgeSize) / 2
 		end := start + m.edgeSize
-		mid := m.performMapping(query.SubSequence(start, end))
+		mid := m.performMapping(query.SubSequence(start, end),aligner)
 		newLeft := left
 		newRight := right
 		afterA := 0 //how much of mid got matched with something from openA
@@ -265,10 +264,10 @@ func (m *mapper) findSplitPoint(query sequence.Sequence, openA, openB []*Mapping
 			//assume that this is the centre, so we'll just bring the left and right way in, and recurse on them (once).
 			empty := make([]*Mapping, 0)
 			if newLeft-left > m.edgeSize*2 { //enough left to look at..
-				m.findSplitPoint(query, openA, empty, newLeft-m.edgeSize*2, newLeft-m.edgeSize)
+				m.findSplitPoint(query, openA, empty, newLeft-m.edgeSize*2, newLeft-m.edgeSize, aligner)
 			}
 			if right-newRight > m.edgeSize*2 {
-				m.findSplitPoint(query, empty, openB, newRight+m.edgeSize, newRight+m.edgeSize*2)
+				m.findSplitPoint(query, empty, openB, newRight+m.edgeSize, newRight+m.edgeSize*2, aligner)
 			}
 			return //and return whatever we found
 		}
@@ -276,10 +275,10 @@ func (m *mapper) findSplitPoint(query sequence.Sequence, openA, openB []*Mapping
 			//no match at all?! Possibly junk in the middle. Recurse on each side independently.
 			empty := make([]*Mapping, 0)
 			if len(openA) > 0 {
-				m.findSplitPoint(query, openA, empty, left, start)
+				m.findSplitPoint(query, openA, empty, left, start, aligner)
 			}
 			if len(openB) > 0 {
-				m.findSplitPoint(query, empty, openB, end, right)
+				m.findSplitPoint(query, empty, openB, end, right, aligner)
 			}
 			return
 		}
@@ -289,9 +288,9 @@ func (m *mapper) findSplitPoint(query sequence.Sequence, openA, openB []*Mapping
 	}
 }
 
-func (m *mapper) GetRepeats(start, end int) (starts, ends []int) {
+func (m *mapper) GetRepeats(start, end int, aligner alignment.Aligner) (starts, ends []int) {
 	query := m.reference.SubSequence(start, end)
-	hits := m.performMapping(query)
+	hits := m.performMapping(query,aligner)
 	hits = removeDominated(hits, hits, query.Len())
 	starts = make([]int, len(hits))
 	ends = make([]int, len(hits))
@@ -304,14 +303,14 @@ func (m *mapper) GetRepeats(start, end int) (starts, ends []int) {
 
 //count A/B are how many of the open list are at an edge (starting at index 0)
 //Take further edgeSize steps in, testing for matching pairs and removing redundant hits
-func (m *mapper) mapNext(query sequence.Sequence, openA, openB []*Mapping) (newA, newB, matched []*Mapping) {
+func (m *mapper) mapNext(query sequence.Sequence, openA, openB []*Mapping, aligner alignment.Aligner) (newA, newB, matched []*Mapping) {
 	var extended []*Mapping
 
 	// Short sequences
 
 	if query.Len() < m.edgeSize*4 {
 		//special handling of "short" sequences. Hold on to the edges a bit longer.
-		newA = m.performMapping(query.SubSequence(m.edgeSize, query.Len()-m.edgeSize))
+		newA = m.performMapping(query.SubSequence(m.edgeSize, query.Len()-m.edgeSize),aligner)
 		newA = removeDominated(newA, newA, query.Len())
 		updateQuery(newA, query)
 		openA, newA, extended = m.matchPairs(openA, newA)
@@ -331,7 +330,7 @@ func (m *mapper) mapNext(query sequence.Sequence, openA, openB []*Mapping) (newA
 	// Long sequences
 
 	// 1. Test one in from the edges, see if anything matches up.
-	newA = m.performMapping(query.SubSequence(m.edgeSize, m.edgeSize*2))
+	newA = m.performMapping(query.SubSequence(m.edgeSize, m.edgeSize*2),aligner)
 	newA = removeDominated(newA, newA, query.Len())
 	updateQuery(newA, query)
 	openA, newA, extended = m.matchPairs(openA, newA)
@@ -340,7 +339,7 @@ func (m *mapper) mapNext(query sequence.Sequence, openA, openB []*Mapping) (newA
 		openA = append(openA, extended...)
 	}
 	//do the same from the other end
-	newB = m.performMapping(query.SubSequence(query.Len()-m.edgeSize*2, query.Len()-m.edgeSize))
+	newB = m.performMapping(query.SubSequence(query.Len()-m.edgeSize*2, query.Len()-m.edgeSize),aligner)
 	newB = removeDominated(newB, newB, query.Len())
 	updateQuery(newB, query)
 	openB, newB, extended = m.matchPairs(newB, openB)
@@ -356,7 +355,7 @@ func (m *mapper) mapNext(query sequence.Sequence, openA, openB []*Mapping) (newA
 	if matched == nil {
 		//do a second round, just in case we got unlucky with read errors or reference seeds
 		if query.Len() > m.edgeSize*5 {
-			openA = m.performMapping(query.SubSequence(m.edgeSize*2, m.edgeSize*3))
+			openA = m.performMapping(query.SubSequence(m.edgeSize*2, m.edgeSize*3),aligner)
 			openA = removeDominated(openA, openA, query.Len())
 			updateQuery(openA, query)
 			openA, newA, extended = m.matchPairs(newA, openA)
@@ -366,7 +365,7 @@ func (m *mapper) mapNext(query sequence.Sequence, openA, openB []*Mapping) (newA
 			openA = append(openA, newA...) //keep everything for now. One last chance to match with B
 		}
 		if query.Len() > m.edgeSize*6 { //room for the other side to extend too
-			openB = m.performMapping(query.SubSequence(query.Len()-m.edgeSize*3, query.Len()-m.edgeSize*2))
+			openB = m.performMapping(query.SubSequence(query.Len()-m.edgeSize*3, query.Len()-m.edgeSize*2),aligner)
 			openB = removeDominated(openB, openB, query.Len())
 			updateQuery(openB, query)
 			openB, newB, extended = m.matchPairs(openB, newB)
@@ -429,16 +428,16 @@ func removeDominated(open, extended []*Mapping, queryLen int) []*Mapping {
 	return open[:last+1]
 }
 
-func (m *mapper) Map(query sequence.Sequence) []*Mapping {
+func (m *mapper) Map(query sequence.Sequence, aligner alignment.Aligner) []*Mapping {
 	var results []*Mapping
 	//For short, return the front of the matches (ignoring substantially worse ones)
 	if query.Len() <= m.edgeSize*2 {
-		results = m.performMapping(query)
+		results = m.performMapping(query,aligner)
 		results = removeDominated(results, results, query.Len())
 		updateQuery(results, query)
 	} else {
 		//1. Map the (possibly unreliable) ends of the query
-		openA, openB, matched := m.mapEnds(query)
+		openA, openB, matched := m.mapEnds(query,aligner)
 
 		if matched != nil {
 			//the end-to-end mappings are the only mappings of interest
@@ -447,7 +446,7 @@ func (m *mapper) Map(query sequence.Sequence) []*Mapping {
 			results = append(openA, openB...)
 		} else {
 			//2. Try two more steps in from each end
-			openA, openB, matched = m.mapNext(query, openA, openB)
+			openA, openB, matched = m.mapNext(query, openA, openB, aligner)
 			if matched != nil {
 				//the end-to-end mappings are still the only mappings of interest
 				results = matched
@@ -466,7 +465,7 @@ func (m *mapper) Map(query sequence.Sequence) []*Mapping {
 						right = b.QueryOffset
 					}
 				}
-				m.findSplitPoint(query, openA, openB, left, right)
+				m.findSplitPoint(query, openA, openB, left, right, aligner)
 				//and remove all unpaired ends
 				size := query.Len() - m.edgeSize
 				for i := len(openA) - 1; i >= 0; i-- {
@@ -488,7 +487,7 @@ func (m *mapper) Map(query sequence.Sequence) []*Mapping {
 	return results
 }
 
-func (m *mapper) performMapping(query sequence.Sequence) []*Mapping {
+func (m *mapper) performMapping(query sequence.Sequence, aligner alignment.Aligner) []*Mapping {
 	k := int(m.index.GetSeedLength())
 	seedQuery := m.index.NewSeedSequence(query)
 	rcQuery := m.index.NewSeedSequence(query.ReverseComplement())
@@ -526,6 +525,13 @@ func (m *mapper) performMapping(query sequence.Sequence) []*Mapping {
 		//2. Match based on shared seeds
 		match := m.index.GetSeedSequence(index)
 		seedMatches := match.Match(seedQuery, seedSet, matchSet, minMatches, k)
+		//oldMatches := match.Match(seedQuery, seedSet, matchSet, minMatches, k)
+		//seedMatches := aligner.PairwiseAlignments(seedQuery, match, seedSet, matchSet, minMatches, k,false)
+		/*if oldMatches != nil && seedMatches == nil {
+			log.Println("BAD new match. Missed:",len(oldMatches),seedQuery.GetName()," min: ",minMatches,"at map pos:",match.GetOffset()+oldMatches[0].SeqA.GetSeedOffset(oldMatches[0].MatchA[0],k))
+			log.Println(oldMatches[0])
+			aligner.PairwiseAlignments(seedQuery, match, seedSet, matchSet, minMatches, k,true)
+		}*/
 		if seedMatches != nil {
 			for _, seedMatch := range seedMatches {
 				start := match.GetOffset() + match.GetSeedOffset(seedMatch.MatchB[0], k)
@@ -564,6 +570,7 @@ func (m *mapper) performMapping(query sequence.Sequence) []*Mapping {
 		}
 		match := m.index.GetSeedSequence(index)
 		seedMatches := match.Match(rcQuery, seedSet, matchSet, minRCMatches, k)
+		//seedMatches := aligner.PairwiseAlignments(rcQuery, match, seedSet, matchSet, minRCMatches, k, false)
 		if seedMatches != nil {
 			for _, seedMatch := range seedMatches {
 				start := match.GetOffset() + match.GetSeedOffset(seedMatch.MatchB[0], k)
@@ -612,8 +619,9 @@ func (m *mapper) performMapping(query sequence.Sequence) []*Mapping {
 }
 
 func (m *mapper) MapWorker(queries <-chan sequence.Sequence, results chan<- []*Mapping, done chan<- bool) {
+	aligner := alignment.NewSeedAligner(m.edgeSize) //one seed for every base!
 	for query := range queries {
-		results <- m.Map(query)
+		results <- m.Map(query,aligner)
 	}
 	done <- true
 }

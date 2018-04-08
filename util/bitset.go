@@ -18,12 +18,12 @@ type IntSet struct {
 }
 
 func NewIntSet() *IntSet {
-	set := IntSet{make([]uint64, 50), 1, 0, 0}
+	set := IntSet{vs: make([]uint64, 50), start: 1, end: 0, count: 0}
 	return &set
 }
 
 func NewIntSetCapacity(capacity int) *IntSet {
-	set := IntSet{make([]uint64, capacity/64+1), 1, 0, 0}
+	set := IntSet{vs: make([]uint64, capacity/64+1), start: 1, end: 0, count: 0}
 	return &set
 }
 
@@ -34,7 +34,7 @@ func NewIntSetFromInts(values []int) *IntSet {
 			max = v
 		}
 	}
-	set := IntSet{make([]uint64, max/64+1), 1, 0, 0}
+	set := IntSet{vs: make([]uint64, max/64+1), start: 1, end: 0, count: 0}
 	s := &set
 	s.AddInts(values)
 	return s
@@ -48,7 +48,7 @@ func NewIntSetFromUInts(values []uint) *IntSet {
 		}
 	}
 
-	set := IntSet{make([]uint64, max/64+1), 1, 0, 0}
+	set := IntSet{vs: make([]uint64, max/64+1), start: max / 64, end: 0, count: 0}
 	s := &set
 	for _, v := range values {
 		s.Add(v)
@@ -76,27 +76,40 @@ func (set *IntSet) Add(x uint) {
 	subIndex := x & 0x3F
 	bit := Bit << subIndex
 	if int(index) >= len(set.vs) {
-		newVs := make([]uint64, index+1)
+		newVs := make([]uint64, index+2)
 		copy(newVs, set.vs)
 		set.vs = newVs
+	}
+	if set.end < set.start {
+		set.start = index
+		set.end = index
+		set.vs[index] = bit
+		set.count = 1
+		return
+	}
+	if index < set.start {
+		set.start = index
+		set.vs[index] = bit
+		set.count++
+		return
+	}
+	if index > set.end {
+		set.end = index
+		set.vs[index] = bit
+		set.count++
+		return
 	}
 	old := set.vs[index]
 	if (old & bit) != 0 { //already exists
 		return
 	}
 	set.vs[index] = old | bit
-	if index < set.start || set.start > set.end {
-		set.start = index
-	}
-	if index > set.end {
-		set.end = index
-	}
 	set.count++
 }
 
 func (set *IntSet) Remove(x uint) {
 	index := x >> 6
-	if index > set.end {
+	if index > set.end || index < set.start {
 		return
 	}
 	subIndex := x & 0x3F
@@ -298,6 +311,7 @@ func GetSharedIDs(sets []*IntSet, minCount int, fast bool) (ids []uint) {
 	end := uint(0)
 	lens := make([]uint, n, n)
 	vs := make([][]uint64, n)
+	shortest := start
 	for i := 0; i < n; i++ {
 		vs[i] = sets[i].vs
 		lens[i] = uint(sets[i].end + 1)
@@ -307,15 +321,35 @@ func GetSharedIDs(sets []*IntSet, minCount int, fast bool) (ids []uint) {
 		if sets[i].end > end {
 			end = sets[i].end
 		}
+		if lens[i] < shortest {
+			shortest = lens[i]
+		}
 	}
 	nextVs := make([]uint64, n)
 	for i := start; i <= end; i++ {
-		for j := 0; j < n; j++ {
-			if lens[j] > i {
-				nextVs[j] = vs[j][i]
-			} else {
-				nextVs[j] = 0
+		if shortest <= i {
+			nextShortest := end
+			for j := 0; j < n; j++ {
+				if lens[j] <= i {
+					//drop it
+					last := n - 1
+					if last < minCount {
+						//insufficient sets remaining
+						return ids
+					}
+					vs[j] = vs[last]
+					lens[j] = lens[last]
+					n = last
+					j--
+				} else if lens[j] < nextShortest {
+					nextShortest = lens[j]
+				}
 			}
+			nextVs = nextVs[:n]
+			shortest = nextShortest
+		}
+		for j := 0; j < n; j++ {
+			nextVs[j] = vs[j][i]
 		}
 		var v uint64 //union
 		if minCount >= 13 {

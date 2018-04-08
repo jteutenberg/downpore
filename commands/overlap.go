@@ -6,12 +6,12 @@ import (
 	"github.com/jteutenberg/downpore/seeds"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util/sequtil"
-	"log"
-	"math"
+	"os"
+	"runtime"
+	"runtime/debug"
+	"runtime/pprof"
 	"sync"
 	"time"
-	"os"
-	"runtime/pprof"
 )
 
 type overlapCommand struct {
@@ -22,9 +22,9 @@ type overlapCommand struct {
 
 func NewOverlapCommand() Command {
 	args, alias, desc := MakeArgs(
-		[]string{"overlap_size", "k", "num_seeds", "seed_batch_size", "chunk_size", "num_workers", "input", "himem"},
-		[]string{"1000", "10", "15", "10000", "10000", "4", "", "true"},
-		[]string{"Size of overlap to search for in bases", "Number of bases in each seed", "Minimum number of seeds to generate for each overlap query", "Maximum total unique seeds to use in each query batch", "Size to chop long reads into for querying against, in bases", "Number of worker threads to spawn", "Fasta/fastq input file", "Whether to cache all reads in memory"})
+		[]string{"overlap_size", "k", "num_seeds", "seed_batch_size", "chunk_size", "query_batch_size", "num_workers", "input", "himem"},
+		[]string{"1000", "10", "15", "10000", "10000", "20000", "4", "", "true"},
+		[]string{"Size of overlap to search for in bases", "Number of bases in each seed", "Minimum number of seeds to generate for each overlap query", "Maximum total unique seeds to use in each query batch", "Size to chop long reads into for querying against, in bases", "Maximum number of queries per batch (if max seeds not reached)", "Number of worker threads to spawn", "Fasta/fastq input file", "Whether to cache all reads in memory"})
 	ov := overlapCommand{args: args, alias: alias, desc: desc}
 	return &ov
 }
@@ -41,6 +41,7 @@ func (com *overlapCommand) Run(args map[string]string) {
 	overlapSize := ParseInt(args["overlap_size"])
 	numSeeds := ParseInt(args["num_seeds"]) //minimum seeds per overlap region
 	seedBatchSize := int(ParseInt(args["seed_batch_size"]))
+	queryBatchSize := int(ParseInt(args["query_batch_size"]))
 	chunkSize := uint(ParseInt(args["chunk_size"])) //slice reads into chunks of this size
 	numWorkers := ParseInt(args["num_workers"])
 	k := ParseInt(args["k"])
@@ -49,26 +50,31 @@ func (com *overlapCommand) Run(args map[string]string) {
 
 	seqSet := sequence.NewFastaSequenceSet(args["input"], overlapSize, numWorkers, ParseBool(args["himem"]), true)
 
-	log.Printf("Counting all %v-mers in the input...\n", k)
+	os.Stderr.WriteString(fmt.Sprintf("Counting all %v-mers in the input...\n", k))
 	kmerCounts := sequtil.KmerOccurrences(seqSet.GetSequences(), k, numWorkers)
 	values := make([]float64, len(kmerCounts))
 	for i, count := range kmerCounts {
 		j := seeds.ReverseComplement(uint(i), uint(k))
-		ratio := float64(count) / float64(kmerCounts[j]+1)
+		ratio := float64(count) / float64(kmerCounts[j]+1) //we want the k-mers with ratio close to 1.0
 		if ratio < 1.0 {
 			ratio = 1.0 / ratio
 		}
-		values[i] = ratio //replacing values
+		values[i] = 100.0 - ratio //high value is good
 	}
 
 	bottom, top := sequtil.TopOccurrences(kmerCounts, uint(k), len(kmerCounts)/100, len(kmerCounts)/50)
 	for _, x := range bottom {
-		values[x] = 10000
+		values[x] = 0
 	}
 	for _, x := range top {
-		values[x] = 10000
+		values[x] = 0
 	}
-	log.Println("Counting complete. Starting indexing and querying...")
+	//polyA/T
+	values[0] = 0
+	values[0xFFFFF] = 0
+	values[0xAAAAA] = 0
+	values[0x55555] = 0
+	os.Stderr.WriteString("Counting complete. Starting indexing and querying...")
 
 	f, _ := os.Create("./cprof")
 	pprof.StartCPUProfile(f)
@@ -80,15 +86,15 @@ func (com *overlapCommand) Run(args map[string]string) {
 			roundTime := time.Since(start)
 			numRounds := float64(seqSet.Size()) / float64(firstSequence)
 			if numRounds > 1.5 {
-				log.Println("Expected remaining execution time:", roundTime*(time.Duration(int(numRounds+0.5))))
+				os.Stderr.WriteString(fmt.Sprintln("Expected remaining execution time:", roundTime*(time.Duration(int(numRounds+0.5)))))
 			}
 		}
 		var seedIndex *seeds.SeedIndex
-		seqs := seqSet.GetNSequencesFrom(firstSequence, int(math.MaxInt32))
 		var overlapper overlap.Overlapper
 		seedIndex = seeds.NewSeedIndex(uint(k))
 		overlapper = overlap.NewOverlapper(seedIndex, chunkSize, numWorkers, overlapSize, numSeeds, 0.25)
 
+		seqs := seqSet.GetNSequencesFrom(firstSequence, queryBatchSize)
 		queries := overlapper.PrepareQueries(numSeeds, seedBatchSize, values, seqs, false)
 		if len(queries) == 0 {
 			break
@@ -104,14 +110,15 @@ func (com *overlapCommand) Run(args map[string]string) {
 				firstSequence = q.SequenceID + 1
 			}
 		}
-
 		//now continue through the file, building up a set to query against
 		seqs = seqSet.GetSequences()
-		queryResults := make([][]*seeds.SeedMatch, numQuerySeqs, numQuerySeqs)
+		queryResults := make([][]*seeds.SeedMatch, numQuerySeqs)
 
 		overlapper.AddSequences(seqs)
 		if round == 0 {
-			log.Println("Using query sets of around", firstSequence, "sequences against", seqSet.Size(), "sequences.")
+			os.Stderr.WriteString(fmt.Sprintln("Using query sets of around", firstSequence, "sequences against", seqSet.Size(), "sequences."))
+		} else {
+			os.Stderr.WriteString(fmt.Sprintln("Using query set with", numQuerySeqs, " sequences starting from", firstSequence, "sequences against", seqSet.Size(), "sequences."))
 		}
 		//Do all the queries, clear the index
 		matches := overlapper.FindOverlaps(queries)
@@ -128,8 +135,12 @@ func (com *overlapCommand) Run(args map[string]string) {
 			}
 			//this collates forward and reverse-complement queries
 			queryResults[qId] = append(queryResults[qId], match)
+			if hits%1000000 == 0 {
+				runtime.GC()
+				debug.FreeOSMemory()
+			}
 		}
-
+		os.Stderr.WriteString(fmt.Sprintln("Total", hits, "hits across", qHits, "overlaps."))
 		allResults := make(chan []*seeds.SeedMatch, numWorkers*2)
 		done := make(chan bool, numWorkers)
 		var lock sync.Mutex
@@ -146,9 +157,9 @@ func (com *overlapCommand) Run(args map[string]string) {
 		for i := 0; i < numWorkers; i++ {
 			<-done
 		}
-		queryResults = queryResults[:0]
-
 		seedIndex.Destroy()
+		runtime.GC()
+		debug.FreeOSMemory()
 	}
 	pprof.StopCPUProfile()
 	f.Close()
@@ -165,7 +176,6 @@ func finalCheckWorker(overlaps <-chan []*seeds.SeedMatch, seedIndex *seeds.SeedI
 			}
 			queryStart := contig.Offsets[0]
 			queryEnd := queryStart + contig.Lengths[0]
-			printLock.Lock()
 			for i, part := range contig.Parts[1:] {
 				//TODO: what about first seed in this part, find best spot in query? Yes.
 				id := i + 1
@@ -175,13 +185,19 @@ func finalCheckWorker(overlaps <-chan []*seeds.SeedMatch, seedIndex *seeds.SeedI
 				if contig.ReverseComplement[0] != contig.ReverseComplement[id] {
 					rc = "-"
 				}
-				if contig.SeqLengths[id] <= overlapSize { //this sequence has been fully covered
+				covered := overlapSize
+				if end-start > overlapSize {
+					covered = end - start
+				}
+				if contig.SeqLengths[id]*9 <= covered*10 { //this sequence has been fully covered
 					seqSet.SetIgnore(part, true)
 				}
 				ident, _ := contig.Matches[i].GetBasesCovered(k)
-				fmt.Printf("%s\t%d\t%d\t%d\t%s\t%s\t%d\t%d\t%d\t%v\t0\t255\n", seqSet.GetName(contig.Parts[0]), contig.SeqLengths[0], queryStart, queryEnd, rc, seqSet.GetName(part), contig.SeqLengths[id], start, end, ident)
+				s := fmt.Sprintf("%s\t%d\t%d\t%d\t%s\t%s\t%d\t%d\t%d\t%v\t0\t255\n", seqSet.GetName(contig.Parts[0]), contig.SeqLengths[0], queryStart, queryEnd, rc, seqSet.GetName(part), contig.SeqLengths[id], start, end, ident)
+				printLock.Lock()
+				fmt.Print(s)
+				printLock.Unlock()
 			}
-			printLock.Unlock()
 		}
 	}
 	done <- true

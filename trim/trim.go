@@ -120,6 +120,7 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	for i := 0; i < numWorkers; i++ {
 		<-done
 	}
+	t.index.IndexSequences(numWorkers)
 
 	edgeSize := 150
 	minSeqLength := 500 //splits need to be longer than this
@@ -466,6 +467,5 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 			}
 		}
 	}
-	t.index.IndexSequences()
 	done <- true
 }

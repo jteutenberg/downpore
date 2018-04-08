@@ -2,6 +2,7 @@ package overlap
 
 import (
 	"github.com/jteutenberg/downpore/seeds"
+	"github.com/jteutenberg/downpore/seeds/alignment"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
 )
@@ -123,12 +124,13 @@ func (lap *overlapper) PrepareQueries(numSeeds int, seedLimit int, kmerValues []
 	//linear here: grab the short queries using the full set of seeds
 	queryID := 0
 	k := int(lap.index.GetSeedLength())
-	for _, s := range cached {
+	for i, s := range cached {
 		q := SeedQuery{queryID, s.GetID(), lap.index.NewSeedSequence(s), true, false}
 		queries = append(queries, &q)
 		rc := SeedQuery{queryID, q.SequenceID, q.Query.ReverseComplement(k,lap.index), true, true}
 		queryID++
 		queries = append(queries, &rc)
+		cached[i] = nil
 	}
 	return queries
 }
@@ -136,6 +138,7 @@ func (lap *overlapper) PrepareQueries(numSeeds int, seedLimit int, kmerValues []
 //AddSequences takes a channel of sequences and reads of a large set to add edges of for querying against.
 func (lap *overlapper) AddSequences(seqs <-chan sequence.Sequence) {
 	completed := make(chan bool, lap.numWorkers)
+	chunksDone := make(chan bool, lap.numWorkers)
 	seedSeq := make(chan *seeds.SeedSequence, lap.numWorkers*2)
 	inputSeq := make(chan sequence.Sequence, lap.numWorkers*2)
 
@@ -143,15 +146,18 @@ func (lap *overlapper) AddSequences(seqs <-chan sequence.Sequence) {
 	for i := 0; i < lap.numWorkers; i++ {
 		go seeds.AddSequenceWorker(inputSeq, lap.index, seedSeq, completed)
 	}
-	count := lap.index.GetNumSequences()
+	//and our own set of workers to add them (split into chunks) as they complete
+	for i := 0; i < lap.numWorkers; i++ {
+		go lap.chunkWorker(seedSeq, chunksDone)
+	}
+
+	//then feed them in
 	go func() {
 		for s := range seqs {
 			if s == nil {
 				continue
 			}
 			inputSeq <- s
-			numChunks := s.Len()/int(lap.chunkSize) + 1
-			count += uint(numChunks) //later we will chop to approximately this number of chunks
 		}
 		close(inputSeq)
 		for i := 0; i < lap.numWorkers; i++ {
@@ -159,7 +165,14 @@ func (lap *overlapper) AddSequences(seqs <-chan sequence.Sequence) {
 		}
 		close(seedSeq)
 	}()
-	//and add them as they get done
+	for i := 0; i < lap.numWorkers; i++ {
+		<-chunksDone
+	}
+	lap.index.IndexSequences(lap.numWorkers)
+}
+
+
+func (lap *overlapper) chunkWorker(seedSeq <-chan *seeds.SeedSequence, done chan<- bool) {
 	k := int(lap.index.GetSeedLength())
 	for s := range seedSeq {
 		//slice into chunkSize pieces
@@ -173,7 +186,6 @@ func (lap *overlapper) AddSequences(seqs <-chan sequence.Sequence) {
 			prevSeedIndex := 0                   //chop by 100 seeds
 			totalOffset := s.GetSeedOffset(0, k) //offset to the first seed
 			lengthInBases := 0                   //initial gap will be added to the length later
-			count := 0
 			for {
 				//count up seeds until 100 or past chunkSize bases
 				seedCount := 0
@@ -209,12 +221,22 @@ func (lap *overlapper) AddSequences(seqs <-chan sequence.Sequence) {
 						totalOffset -= step
 					}
 					lengthInBases = 0
-					count++
+				} else {
+					//didn't get the minimum number of seeds, but we're up to chunkSize. Ignore this chunk entirely -- it contains no queries.
+					prevSeedIndex += seedCount
+					//move back overlap/2
+					for seedCount = 0; lengthInBases < lap.overlap/2 && prevSeedIndex > 0; seedCount++ {
+						prevSeedIndex--
+						step := s.GetNextSeedOffset(prevSeedIndex, k)
+						lengthInBases += step
+						totalOffset -= step
+					}
+					lengthInBases = 0
 				}
 			}
 		}
 	}
-	lap.index.IndexSequences()
+	done <- true
 }
 
 func (lap *overlapper) FindOverlaps(queries []*SeedQuery) <-chan *seeds.SeedMatch {
@@ -246,6 +268,7 @@ func (lap *overlapper) SetOverlapSize(size int) {
 func (lap *overlapper) matchWorker(input <-chan *SeedQuery, output chan<- *seeds.SeedMatch, done chan<- bool) {
 	k := int(lap.index.GetSeedLength())
 	seedSet := util.NewIntSet()
+	aligner := alignment.NewSeedAligner(lap.overlap/2)
 	for q := range input {
 		seedSet.Clear()
 		for i := 0; i < q.Query.GetNumSeeds(); i++ {
@@ -259,13 +282,25 @@ func (lap *overlapper) matchWorker(input <-chan *SeedQuery, output chan<- *seeds
 				continue
 			}
 			m := lap.index.GetSeedSequence(match)
+			//TODO: if there are a vast number of matches (a multi-repeat) then move to a faster check here? Downstream won't be able to make much use of these anyway. Perhaps stick to strictly best match within this query, or first good match?
 			//match is an index in the seed index, the sequence ID is external
-			sMatches := m.Match(q.Query, seedSet, matchSet, minMatches, k)
+			sMatches := aligner.PairwiseAlignments(q.Query, m, seedSet, matchSet, minMatches, k,false)
 			if sMatches != nil {
+				//choose the best one
+				var best *seeds.SeedMatch
+				bestCount := 0
 				for _, sMatch := range sMatches {
-					sMatch.QueryID = q.ID
-					sMatch.ReverseComplementQuery = q.ReverseComplement
-					output <- sMatch
+					_, c := sMatch.GetBasesCovered(k)
+					if c > bestCount {
+						best = sMatch
+					}
+				}
+				best.QueryID = q.ID
+				best.ReverseComplementQuery = q.ReverseComplement
+				output <- best
+				//and some later matches can be pruned here too
+				if len(best.MatchA)*2 > minMatches*3 {
+					minMatches = (len(best.MatchA)*2)/3
 				}
 			}
 		}

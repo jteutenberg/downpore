@@ -120,6 +120,15 @@ TEXT ·countIntersectionToAsm(SB),7,$0
 //func getSoftUnion4Asm(vs []uint64) (uint64, uint64, uint64, uint64)
 TEXT ·getSoftUnion4Asm(SB),7,$0
   MOVQ vs+0(FP), AX //vs
+  MOVQ vs+8(FP), BX //n
+
+  XORQ R8, R8
+  XORQ R9, R9
+  XORQ R10, R10
+  XORQ R11, R11
+
+  CMPQ BX, $3 //don't unroll when there are fewer than 4 values
+  JLE nextround
 
   //Use the same unrolling as for 16s
 
@@ -150,7 +159,6 @@ TEXT ·getSoftUnion4Asm(SB),7,$0
   ORQ CX, R9 //v2
   ORQ DX, R8 //v1
 
-  MOVQ vs+8(FP), BX //n
   //cater for the unrolled part
   SUBQ $4, BX
   ADDQ $32, AX 
@@ -187,6 +195,16 @@ TEXT ·getSoftUnion4Asm(SB),7,$0
 //func getSoftUnion8Asm(vs []uint64) (uint64, uint64, uint64, uint64)
 TEXT ·getSoftUnion8Asm(SB),7,$0
   MOVQ vs+0(FP), AX //vs
+  MOVQ vs+8(FP), BX //n
+
+  //clear registers used for output (in case n is low)
+  XORQ R12, R12
+  XORQ R13, R13
+  XORQ R14, R14
+  XORQ R15, R15
+  
+  CMPQ BX, $5 //don't unroll when there are fewer than 6 values (the number we unroll)
+  JLE nextround
 
   //we can unroll a bunch of the first iterations (which require fewer ops)
 
@@ -252,7 +270,6 @@ TEXT ·getSoftUnion8Asm(SB),7,$0
   XORQ R14, R14
   XORQ R15, R15
 
-  MOVQ vs+8(FP), BX //n
   SUBQ $6, BX
   ADDQ $48, AX 
 
@@ -290,17 +307,25 @@ TEXT ·getSoftUnion8Asm(SB),7,$0
   JMP nextround
 
   finished:
-  MOVQ R12, ret+24(FP)
+  MOVQ R12, ret+24(FP) //v5
   MOVQ R13, ret+32(FP)
   MOVQ R14, ret+40(FP)
-  MOVQ R15, ret+48(FP)
+  MOVQ R15, ret+48(FP) //v8
   RET
  
 //func getSoftUnion16Asm(vs []uint64) (uint64, uint64, uint64, uint64)
 TEXT ·getSoftUnion16Asm(SB),7,$0
   MOVQ vs+0(FP), AX //vs
+  MOVQ vs+8(FP), BX //n
+
+  //zero the xmm registers
+  PXOR X0, X0
+  PXOR X1, X1
+  PXOR X2, X2
+  PXOR X3, X3
 
   //we can unroll a bunch of the first iterations (which require fewer ops)
+  //unlike the ones above, the unroll should never go past n
 
   //1.
   MOVQ (AX), R8 //v1
@@ -379,7 +404,7 @@ TEXT ·getSoftUnion16Asm(SB),7,$0
   ANDQ DX, CX
   ORQ CX, R9 //v2
   ORQ DX, R8 //v1
-  //7.
+  //8.
   MOVQ 56(AX), DX
   MOVQ R14, R15
   ANDQ DX, R15 //v8
@@ -402,13 +427,6 @@ TEXT ·getSoftUnion16Asm(SB),7,$0
   ANDQ DX, CX
   ORQ CX, R9 //v2
 
-  //and zero the xmm registers
-  PXOR X0, X0
-  PXOR X1, X1
-  PXOR X2, X2
-  PXOR X3, X3
-
-  MOVQ vs+8(FP), BX //n
   SUBQ $8, BX
   ADDQ $64, AX 
 
@@ -479,11 +497,14 @@ TEXT ·getSoftUnion16Asm(SB),7,$0
   JMP nextround
 
   finished:
-  //PEXTRQ $1, X7, ret+24(FP)
-  //MOVQ  X7, ret+32(FP)
-  MOVQ X1, ret+32(FP)
-  PEXTRQ $1, X1, ret+24(FP)
-  MOVQ X0, ret+48(FP)
-  PEXTRQ $1, X1, ret+40(FP)
+  //MOVQ X1, ret+32(FP)
+  //PEXTRQ $1, X1, ret+24(FP)
+  //MOVQ X0, ret+48(FP)
+  //PEXTRQ $1, X0, ret+40(FP)
+  MOVQ X3, ret+24(FP) //v13
+  MOVQ X2, ret+32(FP) //v14
+  MOVQ X1, ret+40(FP) //v15
+  MOVQ X0, ret+48(FP) //v16
 
   RET
+

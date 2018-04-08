@@ -268,7 +268,8 @@ TEXT ·packedWriteSegments(SB),7,$0
   MOVL R12, R13
   ADDQ DX, R12 //k-mer as index in seeds
   MOVB (R12), R12
-  CMPB R12, $0
+  //CMPB R12, $0
+  TESTB R12, R12
   JE nohit
 
   //write offset and k-mer (so save k-mer above)
@@ -299,8 +300,10 @@ TEXT ·packedWriteSegments(SB),7,$0
 
   ADDQ DX, R10 
   MOVB (R10), R10
-  CMPB R10, $0
+  //CMPB R10, $0
+  TESTB R10,R10
   JE nohita
+
   //write
   MOVQ R9, (R14) //offset
   MOVQ R13, 8(R14) //seed
@@ -317,7 +320,8 @@ TEXT ·packedWriteSegments(SB),7,$0
 
   ADDQ DX, R11
   MOVB (R11), R11
-  CMPB R11, $0
+  //CMPB R11, $0
+  TESTB R11, R11
   JE nohitb
 
   MOVQ R9, (R14) //offset
@@ -335,7 +339,8 @@ TEXT ·packedWriteSegments(SB),7,$0
 
   ADDQ DX, R12
   MOVB (R12), R12
-  CMPB R12, $0
+  //CMPB R12, $0
+  TESTB R12, R12
   JE nohitc
   
   MOVQ R9, (R14) //offset
@@ -352,7 +357,8 @@ TEXT ·packedWriteSegments(SB),7,$0
   MOVQ R13, R10
   ADDQ DX, R13
   MOVB (R13), R13
-  CMPB R13, $0
+  //CMPB R13, $0
+  TESTB R13, R13
   JE nohitd
 
   MOVQ R9, (R14) //offset

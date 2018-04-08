@@ -11,7 +11,7 @@ type Sequence interface {
 	String() string
 	SubSequence(int, int) Sequence
 	ReverseComplement() Sequence
-	Append(int,Sequence,*string) Sequence
+	Append(int, Sequence, *string) Sequence
 	Len() int
 	GetOffset() int
 	setOffset(int)
@@ -24,7 +24,7 @@ type Sequence interface {
 	SetQuality([]byte)
 	Detach() //ensure this sequence does not have slice references on shared arrays
 	CountKmers(int, int, int, []bool) int
-	CountKmersBetween(int, int,int, int, int, []bool) int
+	CountKmersBetween(int, int, int, int, int, []bool) int
 	WriteSegments([]int, int, int, []bool)
 }
 
@@ -61,7 +61,6 @@ func NewByteSequence(id int, seq string, name *string) Sequence {
 	s := byteSequence{data: data, quality: nil, id: id, offset: 0, inset: 0, name: name}
 	return &s
 }
-
 
 func packBytes(seq []byte, data []byte)
 
@@ -137,13 +136,13 @@ func (s *byteSequence) ReverseComplement() Sequence {
 }
 
 func (s *byteSequence) Append(id int, other Sequence, name *string) Sequence {
-	str := s.String()+other.String()
-	seq := NewByteSequence(id,str,name)
+	str := s.String() + other.String()
+	seq := NewByteSequence(id, str, name)
 	var qs []byte
 	if s.quality != nil {
 		qs = make([]byte, seq.Len())
 		copy(qs, s.quality)
-		copy(qs[len(s.quality):],other.Quality())
+		copy(qs[len(s.quality):], other.Quality())
 	}
 	seq.SetQuality(qs)
 	seq.setOffset(s.GetOffset())
@@ -151,13 +150,13 @@ func (s *byteSequence) Append(id int, other Sequence, name *string) Sequence {
 	return seq
 }
 func (s *packedSequence) Append(id int, other Sequence, name *string) Sequence {
-	str := s.String()+other.String()
-	seq := NewPackedSequence(id,str,name)
+	str := s.String() + other.String()
+	seq := NewPackedSequence(id, str, name)
 	var qs []byte
 	if s.quality != nil {
 		qs = make([]byte, seq.Len())
 		copy(qs, s.quality)
-		copy(qs[len(s.quality):],other.Quality())
+		copy(qs[len(s.quality):], other.Quality())
 	}
 	seq.setOffset(s.GetOffset())
 	seq.setInset(other.GetInset())
@@ -282,7 +281,7 @@ func (s *byteSequence) CountKmers(upTo, k, mask int, kmers []bool) int {
 func (s *byteSequence) CountKmersBetween(from, to, upTo, k, mask int, kmers []bool) int {
 	seed := s.KmerAt(from, k) >> 2
 	count := 0
-	for i := from+k - 1; i < to; i++ {
+	for i := from + k - 1; i < to; i++ {
 		seed = s.NextKmer(seed, mask, i)
 		if kmers[seed] {
 			count++
@@ -318,10 +317,10 @@ func packedCountKmers(data []byte, upTo, skipFront, skipBack, k int, seeds []boo
 func (s *packedSequence) CountKmers(upTo, k, mask int, seeds []bool) int {
 	return packedCountKmers(s.data, upTo, 4-s.firstLen, 4-s.finalLen, k, seeds)
 }
-func (s *packedSequence) CountKmersBetween(from, to,upTo, k, mask int, seeds []bool) int {
+func (s *packedSequence) CountKmersBetween(from, to, upTo, k, mask int, seeds []bool) int {
 	//shrink in from the left and right a bit, i.e. let us undercount sometimes
-	start := (from+4-s.firstLen + 3)/4
-	end := (to+4-s.firstLen)/4
+	start := (from + 4 - s.firstLen + 3) / 4
+	end := (to + 4 - s.firstLen) / 4
 	return packedCountKmers(s.data[start:end], upTo, 4-s.firstLen, 4-s.finalLen, k, seeds)
 }
 func (s *packedSequence) WriteSegments(segments []int, k, mask int, seeds []bool) {
