@@ -422,6 +422,7 @@ func (s *byteSequence) KmerAt(index, k int) int {
 	return v
 }
 
+//packedKmerAt loads the k-mer starting at the bit 2*offset
 func packedKmerAt(data []byte, offset, k int) int32
 
 func (s *packedSequence) KmerAt(index, k int) int {

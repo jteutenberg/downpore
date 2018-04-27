@@ -139,7 +139,17 @@ func Test6CountKmers(test *testing.T) {
 	c1 = s1.CountKmers(100,8, mask, ks)
 	c2 = s2.CountKmers(100,8, mask, ks)
 	if c1 != c2 || c1 != count {
-		test.Error("Mismatching kmer counts : ", count, c1, c2, "\n", s1.String(), "\n", s2.String())
+		test.Error("Mismatching (subseq) 8-mer counts : ", count, c1, c2, "\n", s1.String(), "\n", s2.String())
+	}
+	ks, count = kmerSet(s[7:len(s)-7], 17)
+	mask = 0
+	for i := 0; i < 17; i++ {
+		mask = (mask << 2) | 3
+	}
+	c1 = s1.CountKmers(100,17, mask, ks)
+	c2 = s2.CountKmers(100,17, mask, ks)
+	if c1 != c2 || c1 != count {
+		test.Error("Mismatching (subseq) 17-mer counts : ", count, c1, c2, "\n", s1.String(), "\n", s2.String())
 	}
 }
 func Test7IterateKmers(test *testing.T) {

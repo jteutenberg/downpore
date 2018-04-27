@@ -9,28 +9,24 @@ TEXT ·packedKmerAt(SB),7,$0
   ANDQ $3, CX //keep remainder (in bases) for later shifting
   SHRQ $2, BX //divide by 4 to get index in bytes
 
-  //load 16 bases, potentially up to 3 extra at the beginning
+  //load 32 bases, potentially up to 3 extra at the beginning
   ADDQ BX, AX
-  MOVQ (AX), X1
-  //shuffle big-endian to little-endian, just use 128-bit registers :(
-  MOVQ $0x7777777700010203, R8
-  MOVQ R8, X0
-  PSHUFB X0, X1
-  MOVL X1, AX
+  MOVQ (AX), AX
+  BSWAPQ AX //handle the endian-ness of the 64-bit value
 
   //shift to the correct base
   SHLQ $1, CX //remaining bases => remaining bits
-  SHLL CL, AX //AX left-most bit is now the first of the k-mer 
+  SHLQ CL, AX //AX left-most bit is now the first of the k-mer 
 
-  //and shift away the excess (32-k*2)
+  //and shift away the excess (64-k*2)
   MOVQ k+32(FP), BX
   SHLQ $1, BX
-  MOVQ $32, CX
+  MOVQ $64, CX
   SUBQ BX, CX
-  SHRL CL, AX
+  SHRQ CL, AX
 
-  //return
-  MOVQ AX, ret+40(FP)
+  //return the long value
+  MOVL AX, ret+40(FP)
   RET
 
 //func packBytes(s, data []byte)
@@ -101,20 +97,29 @@ TEXT ·packedCountKmers(SB),7,$0
 
   //get the right shifts we'll need to isolate k-mers
   SHLQ $1, DX
-  MOVQ $32, CX
+  MOVQ $64, CX
   SUBQ DX, CX //CX holds the required shift
 
   //at this point, BX and DX are free to use
-
-  MOVQ $0x7777777700010203, R9 //for big->little endian
-  MOVQ R9, X0
 
   //add k-mers until we hit data length
   MOVQ seeds+56(FP), DX //DX holds the seeds data
   MOVQ $0, R9 //count
 
   //do the first byte one k-mer at a time
-  MOVQ (AX), X1
+  MOVQ (AX), R10
+  BSWAPQ R10
+  MOVQ skipFront+32(FP), BX
+  MOVQ $4, R11
+  SUBQ BX, R11 //bases to process at front
+  SHLQ $1, BX // now bits to remove
+  MOVQ CX, R13 // temp swap
+  MOVQ BX, CX
+  SHLQ CL, R10 //R10 now has correct k-mer at start
+  MOVQ CX, BX
+  MOVQ R13, CX //revert swap
+
+  /*MOVQ (AX), X1
   PSHUFB X0, X1
   MOVL X1, R10 //R10 is the first byte, starting at pos 32
   MOVQ skipFront+32(FP), BX
@@ -126,47 +131,52 @@ TEXT ·packedCountKmers(SB),7,$0
   SHLL CL, R10 //R10 now has the correct k-mer at start
   MOVL CX, BX
   MOVL R13, CX //revert swap
+  */
 
   initial:
-  MOVL R10, R12
-  SHRL CL, R12
+  MOVQ R10, R12
+  SHRQ CL, R12 //R12 now has k-mer value only
   ADDQ DX, R12 //k-mer as index in seeds
-  MOVB (R12), R12
+  MOVB (R12), R12 //existance byte (0 or 1)
   ADDB R12, R9 //count++ (if seed exists)
 
-  SHLL $2, R10 //move to next k-mer
-  ADDL $2, BX
-  CMPL BX, $6
+  SHLQ $2, R10 //move to next k-mer
+  ADDQ $2, BX
+  CMPQ BX, $6
   JLE initial
   
 
   internal:
   ADDQ $1, AX 
-  MOVQ (AX), X1
-  PSHUFB X0, X1
+  //MOVQ (AX), X1
+  //PSHUFB X0, X1
 
   //four k-mers: trim off 0-3 bases from the front
-  MOVL X1, R10
-  SHRL CL, R10
+  //MOVL X1, R10
+  MOVQ (AX), R14 //starting exactly at the first k-mer now
+  BSWAPQ R14
+
+  MOVQ R14, R10
+  SHRQ CL, R10
 
   ADDQ DX, R10 //k-mer as index in seeds
-  MOVB (R10), R10
+  MOVB (R10), R10 //0-1 existance, add it later
 
-  MOVL X1, R11
-  SHLL $2, R11
-  SHRL CL, R11
+  MOVQ R14, R11
+  SHLQ $2, R11
+  SHRQ CL, R11
   ADDQ DX, R11
   MOVB (R11), R11
   
-  MOVL X1, R12
-  SHLL $4, R12
-  SHRL CL, R12
+  MOVQ R14, R12
+  SHLQ $4, R12
+  SHRQ CL, R12
   ADDQ DX, R12
   MOVB (R12), R12
   
-  MOVL X1, R13
-  SHLL $6, R13
-  SHRL CL, R13
+  MOVQ R14, R13
+  SHLQ $6, R13
+  SHRQ CL, R13
   ADDQ DX, R13
   MOVB (R13), R13
 
@@ -185,23 +195,25 @@ TEXT ·packedCountKmers(SB),7,$0
 
   //the < 4 bases (R15) in the tail
   ADDQ $1, AX 
-  MOVQ (AX), X1
-  PSHUFB X0, X1
-  MOVL X1, R10
+  //MOVQ (AX), X1
+  //PSHUFB X0, X1
+  //MOVL X1, R10
+  MOVQ (AX), R10
+  BSWAPQ R10
 
   tail:
   CMPQ R15, $0
   JE endtail
 
-  MOVL R10, R12
-  SHRL CL, R12
+  MOVQ R10, R12
+  SHRQ CL, R12
   ADDQ DX, R12
   MOVB (R12), R12
   ANDQ $0x00000000000000FF, R12 
   ADDQ R12, R9
 
-  SHLL $2, R10 //move to next k-mer
-  SUBL $1, R15
+  SHLQ $2, R10 //move to next k-mer
+  SUBQ $1, R15
   JMP tail
 
   endtail:
