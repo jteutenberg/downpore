@@ -119,20 +119,6 @@ TEXT ·packedCountKmers(SB),7,$0
   MOVQ CX, BX
   MOVQ R13, CX //revert swap
 
-  /*MOVQ (AX), X1
-  PSHUFB X0, X1
-  MOVL X1, R10 //R10 is the first byte, starting at pos 32
-  MOVQ skipFront+32(FP), BX
-  MOVL $4, R11
-  SUBL BX, R11 //bases to process at front
-  SHLL $1, BX //bits to remove
-  MOVL CX, R13 //temp swap
-  MOVL BX, CX
-  SHLL CL, R10 //R10 now has the correct k-mer at start
-  MOVL CX, BX
-  MOVL R13, CX //revert swap
-  */
-
   initial:
   MOVQ R10, R12
   SHRQ CL, R12 //R12 now has k-mer value only
@@ -148,11 +134,8 @@ TEXT ·packedCountKmers(SB),7,$0
 
   internal:
   ADDQ $1, AX 
-  //MOVQ (AX), X1
-  //PSHUFB X0, X1
 
   //four k-mers: trim off 0-3 bases from the front
-  //MOVL X1, R10
   MOVQ (AX), R14 //starting exactly at the first k-mer now
   BSWAPQ R14
 
@@ -195,9 +178,6 @@ TEXT ·packedCountKmers(SB),7,$0
 
   //the < 4 bases (R15) in the tail
   ADDQ $1, AX 
-  //MOVQ (AX), X1
-  //PSHUFB X0, X1
-  //MOVL X1, R10
   MOVQ (AX), R10
   BSWAPQ R10
 
@@ -248,39 +228,34 @@ TEXT ·packedWriteSegments(SB),7,$0
 
   //get the right shifts we'll need to isolate k-mers
   SHLQ $1, DX
-  MOVQ $32, CX
+  MOVQ $64, CX
   SUBQ DX, CX //CX holds the required shift
 
   //at this point, BX and DX are free to use
-
-  MOVQ $0x7777777700010203, R9 //for big->little endian
-  MOVQ R9, X0
 
   //add k-mers until we hit data length
   MOVQ seeds+48(FP), DX //DX holds the seeds data
   MOVQ $0, R9 //the offset
 
   //do the first byte one k-mer at a time
-  MOVQ (AX), X1
-  PSHUFB X0, X1
-  MOVL X1, R10 //R10 is the first byte, starting at pos 32
+  MOVQ (AX), R10
+  BSWAPQ R10
   MOVQ skipFront+24(FP), BX
-  MOVL $4, R11
-  SUBL BX, R11 //bases to process at front
-  SHLL $1, BX //bits to remove
-  MOVL CX, R13 //temp swap
-  MOVL BX, CX
-  SHLL CL, R10 //R10 now has the correct k-mer at start
-  MOVL CX, BX
-  MOVL R13, CX //revert swap
+  MOVQ $4, R11
+  SUBQ BX, R11 //bases to process at front
+  SHLQ $1, BX //bits to remove
+  MOVQ CX, R13 //temp swap
+  MOVQ BX, CX
+  SHLQ CL, R10 //R10 now has the correct k-mer at start
+  MOVQ CX, BX
+  MOVQ R13, CX //revert swap
 
   initial:
-  MOVL R10, R12
-  SHRL CL, R12
-  MOVL R12, R13
+  MOVQ R10, R12
+  SHRQ CL, R12
+  MOVQ R12, R13
   ADDQ DX, R12 //k-mer as index in seeds
   MOVB (R12), R12
-  //CMPB R12, $0
   TESTB R12, R12
   JE nohit
 
@@ -294,25 +269,23 @@ TEXT ·packedWriteSegments(SB),7,$0
   //Then regardless, increment offset and continue
   nohit:
   ADDQ $1, R9 //increment offset
-  SHLL $2, R10 //move to next k-mer
-  ADDL $2, BX
-  CMPL BX, $6
+  SHLQ $2, R10 //move to next k-mer
+  ADDQ $2, BX
+  CMPQ BX, $6
   JLE initial
   
-
   internal:
   ADDQ $1, AX 
-  MOVQ (AX), X1
-  PSHUFB X0, X1
+  MOVQ (AX), R10
+  BSWAPQ R10
+  MOVQ R10, X1
 
   //four k-mers: trim off 0-3 bases from the front
-  MOVL X1, R10
-  SHRL CL, R10
-  MOVL R10, R13
+  SHRQ CL, R10
+  MOVQ R10, R13
 
   ADDQ DX, R10 
   MOVB (R10), R10
-  //CMPB R10, $0
   TESTB R10,R10
   JE nohita
 
@@ -325,14 +298,14 @@ TEXT ·packedWriteSegments(SB),7,$0
   nohita:
   ADDQ $1, R9 //base increment
 
-  MOVL X1, R11
-  SHLL $2, R11
-  SHRL CL, R11
+  MOVQ X1, R11
+  
+  SHLQ $2, R11
+  SHRQ CL, R11
   MOVQ R11, R13
 
   ADDQ DX, R11
   MOVB (R11), R11
-  //CMPB R11, $0
   TESTB R11, R11
   JE nohitb
 
@@ -344,14 +317,13 @@ TEXT ·packedWriteSegments(SB),7,$0
   nohitb:
   ADDQ $1, R9 //base increment
   
-  MOVL X1, R12
-  SHLL $4, R12
-  SHRL CL, R12
+  MOVQ X1, R12
+  SHLQ $4, R12
+  SHRQ CL, R12
   MOVQ R12, R13
 
   ADDQ DX, R12
   MOVB (R12), R12
-  //CMPB R12, $0
   TESTB R12, R12
   JE nohitc
   
@@ -363,13 +335,12 @@ TEXT ·packedWriteSegments(SB),7,$0
   nohitc:
   ADDQ $1, R9 //base increment
 
-  MOVL X1, R13
-  SHLL $6, R13
-  SHRL CL, R13
+  MOVQ X1, R13
+  SHLQ $6, R13
+  SHRQ CL, R13
   MOVQ R13, R10
   ADDQ DX, R13
   MOVB (R13), R13
-  //CMPB R13, $0
   TESTB R13, R13
   JE nohitd
 
@@ -387,16 +358,15 @@ TEXT ·packedWriteSegments(SB),7,$0
 
   //the < 4 bases (R15) in the tail
   ADDQ $1, AX 
-  MOVQ (AX), X1
-  PSHUFB X0, X1
-  MOVL X1, R10
+  MOVQ (AX), R10
+  BSWAPQ R10
 
   tail:
   CMPL R15, $0
   JE endtail
 
-  MOVL R10, R12
-  SHRL CL, R12
+  MOVQ R10, R12
+  SHRQ CL, R12
   MOVQ R12, R13
   ADDQ DX, R12
   MOVB (R12), R12
@@ -410,8 +380,8 @@ TEXT ·packedWriteSegments(SB),7,$0
 
   nohitend:
   ADDQ $1, R9 //increment
-  SHLL $2, R10 //move to next k-mer
-  SUBL $1, R15
+  SHLQ $2, R10 //move to next k-mer
+  SUBQ $1, R15
   JMP tail
 
   endtail:

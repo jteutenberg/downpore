@@ -6,6 +6,31 @@ import (
 	"sort"
 )
 
+func LongKmerOccurrences(seqs <-chan sequence.Sequence, k int) map[int]int {
+	counts := make(map[int]int, 10000000) //at least ten million
+	var mask int
+	for i := 0; i < k; i++ {
+		mask = (mask << 2) | 3
+	}
+	for seq := range seqs {
+		kmer := seq.KmerAt(0, k)
+		if v, ok := counts[kmer]; ok {
+			counts[kmer] = v + 1
+		} else {
+			counts[kmer] = 1
+		}
+		for i := k; i < seq.Len(); i++ {
+			kmer = seq.NextKmer(kmer, mask, i)
+			if v, ok := counts[kmer]; ok {
+				counts[kmer] = v + 1
+			} else {
+				counts[kmer] = 1
+			}
+		}
+	}
+	return counts
+}
+
 func KmerOccurrences(seqs <-chan sequence.Sequence, k, numWorkers int) []uint64 {
 	results := make(chan *[]uint64, numWorkers)
 	for i := 0; i < numWorkers; i++ {

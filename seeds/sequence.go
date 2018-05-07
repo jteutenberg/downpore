@@ -145,7 +145,7 @@ func (s *SeedSequence) ReverseComplement(k int, index *SeedIndex) *SeedSequence 
 				rc = (rc << 2) | ((seed ^ 3) & 3)
 				seed = seed >> 2
 			}
-			seg[n-i] = index.kmerMap[rc]
+			seg[n-i] = int(index.kmerMap[rc])
 		}
 	}
 	//offset/inset remain as indices in the original forward read

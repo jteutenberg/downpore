@@ -22,9 +22,9 @@ type overlapCommand struct {
 
 func NewOverlapCommand() Command {
 	args, alias, desc := MakeArgs(
-		[]string{"overlap_size", "k", "num_seeds", "seed_batch_size", "chunk_size", "query_batch_size", "num_workers", "input", "himem"},
-		[]string{"1000", "10", "15", "10000", "10000", "20000", "4", "", "true"},
-		[]string{"Size of overlap to search for in bases", "Number of bases in each seed", "Minimum number of seeds to generate for each overlap query", "Maximum total unique seeds to use in each query batch", "Size to chop long reads into for querying against, in bases", "Maximum number of queries per batch (if max seeds not reached)", "Number of worker threads to spawn", "Fasta/fastq input file", "Whether to cache all reads in memory"})
+		[]string{"overlap_size", "k", "num_seeds", "seed_batch_size", "chunk_size", "query_batch_size", "min_hits", "num_workers", "input", "seed_values", "himem"},
+		[]string{"1000", "10", "15", "10000", "10000", "20000", "0.25", "4", "", "", "true"},
+		[]string{"Size of overlap to search for in bases", "Number of bases in each seed", "Minimum number of seeds to generate for each overlap query", "Maximum total unique seeds to use in each query batch", "Size to chop long reads into for querying against, in bases", "Maximum number of queries per batch (if max seeds not reached)", "Minimum proportion of seeds that must match each query", "Number of worker threads to spawn", "Fasta/fastq input file", "File containing values to use during seed selection.", "Whether to cache all reads in memory"})
 	ov := overlapCommand{args: args, alias: alias, desc: desc}
 	return &ov
 }
@@ -45,35 +45,47 @@ func (com *overlapCommand) Run(args map[string]string) {
 	chunkSize := uint(ParseInt(args["chunk_size"])) //slice reads into chunks of this size
 	numWorkers := ParseInt(args["num_workers"])
 	k := ParseInt(args["k"])
+	hitFraction := ParseFloat(args["min_hits"])
 
 	//run through the sequences file, generating batches of queries
 
-	seqSet := sequence.NewFastaSequenceSet(args["input"], overlapSize, numWorkers, ParseBool(args["himem"]), true)
+	seqSet := sequence.NewFastaSequenceSet(args["input"], overlapSize, numWorkers, ParseBool(args["himem"]), false)
 
 	os.Stderr.WriteString(fmt.Sprintf("Counting all %v-mers in the input...\n", k))
 	kmerCounts := sequtil.KmerOccurrences(seqSet.GetSequences(), k, numWorkers)
-	values := make([]float64, len(kmerCounts))
-	for i, count := range kmerCounts {
-		j := seeds.ReverseComplement(uint(i), uint(k))
-		ratio := float64(count) / float64(kmerCounts[j]+1) //we want the k-mers with ratio close to 1.0
-		if ratio < 1.0 {
-			ratio = 1.0 / ratio
+	var values []float64
+	if args["seed_values"] == "" {
+		values = make([]float64, len(kmerCounts))
+		for i, count := range kmerCounts {
+			if count >= 3 {
+				j := seeds.ReverseComplement(uint(i), uint(k))
+				ratio := 0.5 - float64(count)/float64(count+kmerCounts[j])
+				if ratio < 0 {
+					ratio = -ratio
+				}
+				values[i] = 1.0 - ratio //high value is good
+			}
 		}
-		values[i] = 100.0 - ratio //high value is good
+	} else {
+		//load seed values
+		var seedK int
+		seedK, values = sequtil.LoadKmerValues(args["seed_values"])
+		if seedK != k {
+			os.Stderr.WriteString(fmt.Sprintln("Seed values k of", seedK, "does not match target k of", k))
+			return
+		}
+		for i, count := range kmerCounts {
+			if count < 3 {
+				values[i] = 0
+			}
+		}
 	}
-
-	bottom, top := sequtil.TopOccurrences(kmerCounts, uint(k), len(kmerCounts)/100, len(kmerCounts)/50)
-	for _, x := range bottom {
-		values[x] = 0
-	}
+	_, top := sequtil.TopOccurrences(kmerCounts, uint(k), len(kmerCounts)/100, len(kmerCounts)/50) //top 2%
 	for _, x := range top {
 		values[x] = 0
 	}
-	//polyA/T
+	//TODO: blacklist of homopolymers and other nasties? 0,0xFFF..,0xAAA.. , 0x555..
 	values[0] = 0
-	values[0xFFFFF] = 0
-	values[0xAAAAA] = 0
-	values[0x55555] = 0
 	os.Stderr.WriteString("Counting complete. Starting indexing and querying...")
 
 	f, _ := os.Create("./cprof")
@@ -92,11 +104,15 @@ func (com *overlapCommand) Run(args map[string]string) {
 		var seedIndex *seeds.SeedIndex
 		var overlapper overlap.Overlapper
 		seedIndex = seeds.NewSeedIndex(uint(k))
-		overlapper = overlap.NewOverlapper(seedIndex, chunkSize, numWorkers, overlapSize, numSeeds, 0.25)
+		overlapper = overlap.NewOverlapper(seedIndex, chunkSize, numWorkers, overlapSize, numSeeds, hitFraction)
 
 		seqs := seqSet.GetNSequencesFrom(firstSequence, queryBatchSize)
 		queries := overlapper.PrepareQueries(numSeeds, seedBatchSize, values, seqs, false)
 		if len(queries) == 0 {
+			/*f, _ := os.Create("mprof")
+			runtime.GC() // get up-to-date statistics
+			pprof.WriteHeapProfile(f)
+			f.Close()*/
 			break
 		}
 
