@@ -119,7 +119,7 @@ func (m *mapper) AsString(mapping *Mapping) string {
 	if m.circular && mappedLength < 0 {
 		mappedLength = m.reference.Len() - mapping.Start + mapping.End
 	}
-	return fmt.Sprintf("%s\t%d\t%d\t%d\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t255", mapping.Query.GetName(), mapping.Query.Len(), mapping.QueryOffset, mapping.Query.Len()-mapping.QueryInset, rc, m.reference.GetName(), m.reference.Len(), mapping.Start, mapping.End, mapping.ids, mapping.End-mapping.Start)
+	return fmt.Sprintf("%s\t%d\t%d\t%d\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t255", mapping.Query.GetName(), mapping.Query.Len(), mapping.QueryOffset, mapping.Query.Len()-mapping.QueryInset, rc, m.reference.GetName(), m.reference.Len(), mapping.Start, mapping.End, mapping.ids, mappedLength)
 }
 
 func updateQuery(ms []*Mapping, q sequence.Sequence) {
@@ -525,13 +525,6 @@ func (m *mapper) performMapping(query sequence.Sequence, aligner alignment.Align
 		//2. Match based on shared seeds
 		match := m.index.GetSeedSequence(index)
 		seedMatches := match.Match(seedQuery, seedSet, matchSet, minMatches, k)
-		//oldMatches := match.Match(seedQuery, seedSet, matchSet, minMatches, k)
-		//seedMatches := aligner.PairwiseAlignments(seedQuery, match, seedSet, matchSet, minMatches, k,false)
-		/*if oldMatches != nil && seedMatches == nil {
-			log.Println("BAD new match. Missed:",len(oldMatches),seedQuery.GetName()," min: ",minMatches,"at map pos:",match.GetOffset()+oldMatches[0].SeqA.GetSeedOffset(oldMatches[0].MatchA[0],k))
-			log.Println(oldMatches[0])
-			aligner.PairwiseAlignments(seedQuery, match, seedSet, matchSet, minMatches, k,true)
-		}*/
 		if seedMatches != nil {
 			for _, seedMatch := range seedMatches {
 				start := match.GetOffset() + match.GetSeedOffset(seedMatch.MatchB[0], k)
