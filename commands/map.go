@@ -16,9 +16,9 @@ type mapCommand struct {
 
 func NewMapCommand() Command {
 	args, alias, desc := MakeArgs(
-		[]string{"input", "reference", "circular", "k", "query_size", "chunk_size", "seed_rate", "num_workers"},
-		[]string{"", "", "true", "11", "1000", "10000", "75", "4"},
-		[]string{"Fasta/fastq input file", "A fasta file containing a reference sequence to align against", "Whether the reference genome is circular", "Length of seeds in bases", "The number of bases to query at a time", "The number of bases for reference index chunks", "The maximum number of bases between seeds in the reference", "The number of worker process to use for mapping"})
+		[]string{"input", "reference", "circular", "k", "query_size", "min_length", "chunk_size", "seed_rate", "num_workers"},
+		[]string{"", "", "true", "11", "1000", "500", "10000", "75", "4"},
+		[]string{"Fasta/fastq input file", "A fasta file containing a reference sequence to align against", "Whether the reference genome is circular", "Length of seeds in bases", "The number of bases to query at a time", "The minimum sequence size to generate queries from","The number of bases for reference index chunks", "The maximum number of bases between seeds in the reference", "The number of worker process to use for mapping"})
 	cons := mapCommand{args: args, alias: alias, desc: desc}
 	return &cons
 }
@@ -36,7 +36,7 @@ func (com *mapCommand) Run(args map[string]string) {
 	reference := <-refs
 	k := ParseInt(args["k"])
 	numWorkers := ParseInt(args["num_workers"])
-	minLength := 500
+	minLength := ParseInt(args["min_length"])
 	circular := ParseBool(args["circular"])
 	querySize := ParseInt(args["query_size"])
 	chunkSize := ParseInt(args["chunk_size"])
@@ -53,7 +53,9 @@ func (com *mapCommand) Run(args map[string]string) {
 	targetFreq := 0.000005
 	for i, count := range kmerCounts {
 		freq := float64(count) / tf
-		if freq <= targetFreq {
+		if count < 3 {
+			values[i] = 0
+		} else if freq <= targetFreq {
 			values[i] = 1.0 - (targetFreq - freq)
 		} else {
 			values[i] = 1.0 - (freq - targetFreq)
@@ -61,18 +63,12 @@ func (com *mapCommand) Run(args map[string]string) {
 	}
 
 	os.Stderr.WriteString("K-mer counting complete. Preparing to start indexing and querying...\n")
-	bottom, top := sequtil.TopOccurrences(kmerCounts, uint(k), len(kmerCounts)/100, len(kmerCounts)/50)
-	for _, x := range bottom {
-		values[x] = 0
-	}
+	_, top := sequtil.TopOccurrences(kmerCounts, uint(k), len(kmerCounts)/100, len(kmerCounts)/50)
 	for _, x := range top {
 		values[x] = 0
 	}
-	//polyA/T/C/G
+	//TODO: polyA/T/C/G
 	values[0] = 0
-	values[0xFFFFF] = 0
-	values[0xAAAAA] = 0
-	values[0x55555] = 0
 
 	mapper := mapping.NewMapper(reference, circular, uint(k), values, seedRate, querySize, chunkSize, 4)
 	//read each sequence, map against reference
