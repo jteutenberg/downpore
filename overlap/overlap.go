@@ -5,6 +5,7 @@ import (
 	"github.com/jteutenberg/downpore/seeds/alignment"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
+	"fmt"
 )
 
 //SeedQuery describes the input used to produce Overlaps from the current state of the Overlapper
@@ -16,8 +17,14 @@ type SeedQuery struct {
 	ReverseComplement bool
 }
 
+var QueryEdges = 1
+var QueryCentre = 2
+var QueryAll = 4
+var WeightEdges = 8
+var WeightNone = 0 //default weighting
+
 type Overlapper interface {
-	PrepareQueries(int, int, []float64, <-chan sequence.Sequence, bool) []*SeedQuery
+	PrepareQueries(int, int, []float64, <-chan sequence.Sequence, int) []*SeedQuery
 	AddSequences(<-chan sequence.Sequence)
 	FindOverlaps([]*SeedQuery) <-chan *seeds.SeedMatch
 	SetOverlapSize(int)
@@ -37,76 +44,135 @@ func NewOverlapper(index *seeds.SeedIndex, chunkSize uint, numWorkers int, overl
 	return &ov
 }
 
-//TODO: make this a factory-style method (currently only uses "centre")
-func (lap *overlapper) PrepareQueries(numSeeds int, seedLimit int, kmerValues []float64, seqs <-chan sequence.Sequence, centre bool) []*SeedQuery {
+func addWeighted(subseq sequence.Sequence, subseqsOut chan<- sequence.Sequence) {
+	sideSize := 200
+	if subseq.Len() > 400 {
+		subseqsOut <- subseq.SubSequence(0, sideSize)
+		subseqsOut <- subseq.SubSequence(subseq.Len()-sideSize, subseq.Len())
+	} else {
+		subseqsOut <- subseq
+	}
+}
+
+func (lap *overlapper) getEdges(numSeeds, seedLimit int, weightSides bool, seqsIn <-chan sequence.Sequence, subseqsOut chan<- sequence.Sequence) []sequence.Sequence {
+	cached := make([]sequence.Sequence, 0, 5000)
+	for s := range seqsIn {
+		if lap.index.Size() >= seedLimit {
+			break
+		}
+		if s.Len() < lap.overlap*2 {
+			if weightSides {
+				addWeighted(s, subseqsOut)
+			} else {
+				subseqsOut <- s
+			}
+			cached = append(cached, s)
+		} else {
+			//fmt.Printf(">%s\n%s\n",s.GetName(),s.String())
+			s1 := s.SubSequence(0, lap.overlap)
+			s2 := s.SubSequence(s.Len()-lap.overlap, s.Len())
+			if weightSides {
+				addWeighted(s1, subseqsOut)
+				addWeighted(s2, subseqsOut)
+			} else {
+				subseqsOut <- s1
+				subseqsOut <- s2
+			}
+			cached = append(cached, s1)
+			cached = append(cached, s2)
+			//fmt.Printf(">%s_front\n%s\n",s.GetName(),s1.String())
+			//fmt.Printf(">%s_back\n%s\n",s.GetName(),s2.String())
+		}
+	}
+	//drain the remaining input, discarding the sequences
+	for _ = range seqsIn {
+	}
+	return cached
+}
+
+func (lap *overlapper) getCentres(numSeeds, seedLimit int, weightSides bool, seqsIn <-chan sequence.Sequence, subseqsOut chan<- sequence.Sequence) []sequence.Sequence {
+	cached := make([]sequence.Sequence, 0, 5000)
+	for s := range seqsIn {
+		if lap.index.Size() >= seedLimit {
+			break
+		}
+		start := (s.Len() - lap.overlap) / 2
+		if start < 0 {
+			start = 0
+		}
+		end := start + lap.overlap
+		if end >= s.Len() {
+			end = s.Len() - 1
+		}
+		centre := s.SubSequence(start, end)
+		if weightSides {
+			addWeighted(centre, subseqsOut)
+		} else {
+			subseqsOut <- centre
+		}
+		cached = append(cached, centre)
+	}
+	//drain the remaining input, discarding the sequences
+	for _ = range seqsIn {
+	}
+	return cached
+}
+
+func (lap *overlapper) getAll(numSeeds, seedLimit int, weightSides bool, seqsIn <-chan sequence.Sequence, subseqsOut chan<- sequence.Sequence) []sequence.Sequence {
+	cached := make([]sequence.Sequence, 0, 5000)
+	for s := range seqsIn {
+		if lap.index.Size() >= seedLimit {
+			break
+		}
+		fmt.Println("next sequence has length",s.Len())
+		if s.Len() < lap.overlap*2 {
+			if weightSides {
+				addWeighted(s, subseqsOut)
+			} else {
+				subseqsOut <- s
+			}
+			cached = append(cached, s)
+		} else {
+			slices := s.Len() / lap.overlap
+			for i := 0; i < slices; i++ {
+				start := (i * s.Len())/slices
+				end := ((i+1) * s.Len())/slices
+				if i == slices-1 {
+					end = s.Len()
+				}
+				sub := s.SubSequence(start,end)
+				if weightSides {
+					addWeighted(sub, subseqsOut)
+				} else {
+					subseqsOut <- sub
+				}
+				cached = append(cached, sub)
+			}
+		}
+	}
+	//drain the remaining input, discarding the sequences
+	for _ = range seqsIn {
+	}
+	return cached
+}
+
+func (lap *overlapper) PrepareQueries(numSeeds int, seedLimit int, kmerValues []float64, seqs <-chan sequence.Sequence, queryType int) []*SeedQuery {
 	completed := make(chan bool, lap.numWorkers)
 	inputSeq := make(chan sequence.Sequence, lap.numWorkers*2)
-	weightSides := false
+	weightSides := (queryType & WeightEdges) != 0
 	if weightSides {
 		numSeeds /= 2
 	}
 	for i := 0; i < lap.numWorkers; i++ {
 		go seeds.AddSeedsWorker(inputSeq, lap.index, numSeeds, kmerValues, completed)
 	}
-	//TODO: fill the cache once, according to parameters
-	cached := make([]sequence.Sequence, 0, 5000)
-	for s := range seqs {
-		if lap.index.Size() >= seedLimit {
-			break
-		}
-		if centre {
-			start := (s.Len() - lap.overlap) / 2
-			if start < 0 {
-				start = 0
-			}
-			end := start + lap.overlap
-			if end >= s.Len() {
-				end = s.Len() - 1
-			}
-			if weightSides {
-				edge := 200
-				if edge >= end {
-					edge = end
-				}
-				inputSeq <- s.SubSequence(start, start+edge)
-				inputSeq <- s.SubSequence(end-edge, end)
-			} else {
-				inputSeq <- s.SubSequence(start, end)
-			}
-			cached = append(cached, s.SubSequence(start, end))
-		} else { //use edges of the sequence instead
-			//enqueue this sequence for processing into a query
-			if weightSides {
-				inputSeq <- s.SubSequence(0, 200)
-				inputSeq <- s.SubSequence(s.Len()-200, s.Len())
-				if s.Len() >= lap.overlap*2 {
-					inputSeq <- s.SubSequence(lap.overlap-200, lap.overlap)
-					inputSeq <- s.SubSequence(s.Len()-lap.overlap, s.Len()-lap.overlap+200)
-					cached = append(cached, s.SubSequence(0, lap.overlap))
-					cached = append(cached, s.SubSequence(s.Len()-lap.overlap, s.Len()))
-				} else {
-					cached = append(cached, s)
-				}
-			} else {
-				if s.Len() < lap.overlap*2 {
-					inputSeq <- s
-					cached = append(cached, s)
-					//fmt.Printf(">%s\n%s\n",s.GetName(),s.String())
-				} else {
-					s1 := s.SubSequence(0, lap.overlap)
-					s2 := s.SubSequence(s.Len()-lap.overlap, s.Len())
-					inputSeq <- s1
-					inputSeq <- s2
-					cached = append(cached, s1)
-					cached = append(cached, s2)
-					//fmt.Printf(">%s_front\n%s\n",s.GetName(),s1.String())
-					//fmt.Printf(">%s_back\n%s\n",s.GetName(),s2.String())
-				}
-			}
-		}
-	}
-	//drain the remaining input, discarding the sequences
-	for _ = range seqs {
+	var cached []sequence.Sequence
+	if (queryType & QueryEdges) != 0 {
+		cached = lap.getEdges(numSeeds, seedLimit, weightSides, seqs, inputSeq)
+	} else if (queryType & QueryCentre) != 0 {
+		cached = lap.getCentres(numSeeds, seedLimit, weightSides, seqs, inputSeq)
+	} else { //query all default
+		cached = lap.getAll(numSeeds, seedLimit, weightSides, seqs, inputSeq)
 	}
 	//finish up the workers
 	close(inputSeq)

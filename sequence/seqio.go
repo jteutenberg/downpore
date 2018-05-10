@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -21,15 +22,20 @@ type SequenceSet interface {
 	GetSequences() <-chan Sequence
 	GetNSequencesFrom(int, int) <-chan Sequence //starting from previously seen sequence id
 	GetSequencesByID([]int) <-chan Sequence
+
+	GetIDsByLength() ([]int,[]int)
+
 	GetLength(int) int //gets the length of a (previously read) sequence
 	GetBases() int64   //all bases in this set (read so far)
 	GetName(int) string
 	SetName(int, string)
+
 	SetIgnore(int, bool) //a sequence id that will be skipped on future requests
 	SetFrontTrim(int, int)
 	SetBackTrim(int, int)
 	GetFrontTrim(int) int
 	GetBackTrim(int) int
+
 	Size() int
 	AddSequence(Sequence, string) //additional sequences to be kept in memory, these appear after the fasta on read
 	Write(io.Writer, bool)
@@ -41,15 +47,22 @@ type fastaSequenceSet struct {
 	ignore        []bool
 	frontTrim     []int
 	backTrim      []int
-	lengths       []int
-	bases         int64
+
+	//data for manually added, extra sequences
+	extras        []Sequence
+	extraNames    []string
+
+	//data for all sequences + extras
 	names         []string
+	lengths       []int
+	quality       []byte //median quality of sequence
+
+	bases         int64
 	cached        []Sequence
 	minLen        int
 	isFastq       bool //whether quality scores are available or not
 	size          int
-	extras        []Sequence
-	extraNames    []string
+
 	numWorkers    int
 	cache         bool //whether or not to cache sequences in memory
 	cacheFull     bool //whether the whole input file has been cached
@@ -68,10 +81,13 @@ func (f *fastaSequenceSet) sendExtras(sentCount, maxSeqs, nextID int, seqOut cha
 	if sentCount >= maxSeqs {
 		return false
 	}
-	for _, seq := range f.extras {
+	for i, seq := range f.extras {
 		seq.setID(nextID)
 		if len(f.ignore) <= nextID {
 			f.ignore = append(f.ignore, false)
+			f.names = append(f.names, f.extraNames[i])
+			f.quality = append(f.quality,getMedianQuality(seq))
+			f.lengths = append(f.lengths, seq.Len())
 		}
 		if !f.ignore[nextID] {
 			seqOut <- seq
@@ -220,6 +236,7 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 								}
 							}
 						}
+						f.quality = append(f.quality,getMedianQuality(seq))
 						sentCount++
 						if f.cache {
 							f.cached = append(f.cached, seq)
@@ -291,7 +308,7 @@ func (f *fastaSequenceSet) GetSequencesByID(ids []int) <-chan Sequence {
 		f.ignore[id] = false
 	}
 	finalReturn := make(chan Sequence, 20)
-	seqs := f.GetNSequencesFrom(0, int(math.MaxInt32)) //len(ids))
+	seqs := f.GetSequences()
 	go func() {
 		sentCount := 0
 		for seq := range seqs {
@@ -307,6 +324,21 @@ func (f *fastaSequenceSet) GetSequencesByID(ids []int) <-chan Sequence {
 func (f *fastaSequenceSet) GetLength(id int) int {
 	return f.lengths[id]
 }
+func (f *fastaSequenceSet) GetMedianQuality(id int) byte {
+	return f.quality[id]
+}
+func getMedianQuality(seq Sequence) byte {
+	qs := seq.Quality()
+	if qs == nil {
+		return 20
+	}
+	//actually, just take the mean TODO: consider median here
+	mean := 0
+	for _, q := range qs {
+		mean += int(q)
+	}
+	return byte( mean/len(qs) )
+}
 
 func (f *fastaSequenceSet) GetBases() int64 {
 	return f.bases
@@ -314,30 +346,44 @@ func (f *fastaSequenceSet) GetBases() int64 {
 
 func (f *fastaSequenceSet) GetName(id int) string {
 	if id >= len(f.names) {
-		//test extras
-		for i, seq := range f.extras {
-			if seq.GetID() == id {
-				return f.extraNames[i]
-			}
-		}
-	} else {
-		return f.names[id]
+		return fmt.Sprint(id)
 	}
-	return fmt.Sprint(id)
+	return f.names[id]
 }
 
 func (f *fastaSequenceSet) SetName(id int, name string) {
-	if id >= len(f.names) {
-		//test extras
-		for i, seq := range f.extras {
-			if seq.GetID() == id {
-				f.extraNames[i] = name
-				return
-			}
+	f.names[id] = name
+}
+
+type lengthSorter struct {
+	lengths []int
+	ids []int
+}
+func (d *lengthSorter) Len() int {
+	return len(d.ids)
+}
+func (d *lengthSorter) Less(i, j int) bool {
+	return d.lengths[i] > d.lengths[j]
+}
+func (d *lengthSorter) Swap(i, j int) {
+	d.ids[i], d.ids[j] = d.ids[j], d.ids[i]
+	d.lengths[i], d.lengths[j] = d.lengths[j], d.lengths[i]
+}
+
+func (f *fastaSequenceSet) GetIDsByLength() ([]int,[]int) {
+	byLength :=  lengthSorter{ids:make([]int, len(f.lengths)),lengths: make([]int, len(f.lengths)) }
+	count := 0
+	for i, length := range f.lengths {
+		if !f.ignore[i] {
+			byLength.ids[count] = i
+			byLength.lengths[count] = length
+			count++
 		}
-	} else {
-		f.names[id] = name
 	}
+	byLength.lengths = byLength.lengths[:count]
+	byLength.ids = byLength.ids[:count]
+	sort.Sort(&byLength)
+	return byLength.ids,byLength.lengths
 }
 
 func (f *fastaSequenceSet) SetIgnore(id int, ignore bool) {

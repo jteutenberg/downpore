@@ -9,7 +9,6 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
-	"runtime/pprof"
 	"sync"
 	"time"
 )
@@ -37,24 +36,11 @@ func (com *overlapCommand) GetArgs() (map[string]string, map[string]string, map[
 	return com.args, com.alias, com.desc
 }
 
-func (com *overlapCommand) Run(args map[string]string) {
-	overlapSize := ParseInt(args["overlap_size"])
-	numSeeds := ParseInt(args["num_seeds"]) //minimum seeds per overlap region
-	seedBatchSize := int(ParseInt(args["seed_batch_size"]))
-	queryBatchSize := int(ParseInt(args["query_batch_size"]))
-	chunkSize := uint(ParseInt(args["chunk_size"])) //slice reads into chunks of this size
-	numWorkers := ParseInt(args["num_workers"])
-	k := ParseInt(args["k"])
-	hitFraction := ParseFloat(args["min_hits"])
-
-	//run through the sequences file, generating batches of queries
-
-	seqSet := sequence.NewFastaSequenceSet(args["input"], overlapSize, numWorkers, ParseBool(args["himem"]), false)
-
+func getKmerValues(filename string, k, numWorkers int, seqSet sequence.SequenceSet) []float64 {
 	os.Stderr.WriteString(fmt.Sprintf("Counting all %v-mers in the input...\n", k))
 	kmerCounts := sequtil.KmerOccurrences(seqSet.GetSequences(), k, numWorkers)
 	var values []float64
-	if args["seed_values"] == "" {
+	if filename == "" {
 		values = make([]float64, len(kmerCounts))
 		for i, count := range kmerCounts {
 			if count >= 3 {
@@ -69,10 +55,10 @@ func (com *overlapCommand) Run(args map[string]string) {
 	} else {
 		//load seed values
 		var seedK int
-		seedK, values = sequtil.LoadKmerValues(args["seed_values"])
+		seedK, values = sequtil.LoadKmerValues(filename)
 		if seedK != k {
 			os.Stderr.WriteString(fmt.Sprintln("Seed values k of", seedK, "does not match target k of", k))
-			return
+			return nil
 		}
 		for i, count := range kmerCounts {
 			if count < 3 {
@@ -86,10 +72,25 @@ func (com *overlapCommand) Run(args map[string]string) {
 	}
 	//TODO: blacklist of homopolymers and other nasties? 0,0xFFF..,0xAAA.. , 0x555..
 	values[0] = 0
-	os.Stderr.WriteString("Counting complete. Starting indexing and querying...")
+	return values
+}
 
-	f, _ := os.Create("./cprof")
-	pprof.StartCPUProfile(f)
+func (com *overlapCommand) Run(args map[string]string) {
+	overlapSize := ParseInt(args["overlap_size"])
+	numSeeds := ParseInt(args["num_seeds"]) //minimum seeds per overlap region
+	seedBatchSize := int(ParseInt(args["seed_batch_size"]))
+	queryBatchSize := int(ParseInt(args["query_batch_size"]))
+	chunkSize := uint(ParseInt(args["chunk_size"])) //slice reads into chunks of this size
+	numWorkers := ParseInt(args["num_workers"])
+	k := ParseInt(args["k"])
+	hitFraction := ParseFloat(args["min_hits"])
+
+	//run through the sequences file, generating batches of queries
+
+	seqSet := sequence.NewFastaSequenceSet(args["input"], overlapSize, numWorkers, ParseBool(args["himem"]), false)
+	values := getKmerValues(args["seed_values"],k, numWorkers, seqSet)
+
+	os.Stderr.WriteString("Counting complete. Starting indexing and querying...")
 
 	firstSequence := 0
 	start := time.Now()
@@ -107,12 +108,8 @@ func (com *overlapCommand) Run(args map[string]string) {
 		overlapper = overlap.NewOverlapper(seedIndex, chunkSize, numWorkers, overlapSize, numSeeds, hitFraction)
 
 		seqs := seqSet.GetNSequencesFrom(firstSequence, queryBatchSize)
-		queries := overlapper.PrepareQueries(numSeeds, seedBatchSize, values, seqs, false)
+		queries := overlapper.PrepareQueries(numSeeds, seedBatchSize, values, seqs, overlap.QueryEdges)
 		if len(queries) == 0 {
-			/*f, _ := os.Create("mprof")
-			runtime.GC() // get up-to-date statistics
-			pprof.WriteHeapProfile(f)
-			f.Close()*/
 			break
 		}
 
@@ -177,8 +174,6 @@ func (com *overlapCommand) Run(args map[string]string) {
 		runtime.GC()
 		debug.FreeOSMemory()
 	}
-	pprof.StopCPUProfile()
-	f.Close()
 }
 
 func finalCheckWorker(overlaps <-chan []*seeds.SeedMatch, seedIndex *seeds.SeedIndex, seqSet sequence.SequenceSet, overlapSize int, printLock *sync.Mutex, done chan<- bool) {
