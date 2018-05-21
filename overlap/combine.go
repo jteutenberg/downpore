@@ -5,7 +5,7 @@ import (
 )
 
 type SeedContig struct {
-	Combined          *seeds.SeedSequence
+	Combined          *seeds.SeedSequence //seed-based consensus
 	Parts             []int
 	ReverseComplement []bool
 	Offsets           []int              //start position of Combined within each Part
@@ -98,6 +98,34 @@ func NewSeedContig(ms []*seeds.SeedMatch, k int) *SeedContig {
 		contig.Lengths[i] = parent.Len() - part.GetOffset() - part.GetInset()
 	}
 	return &contig
+}
+
+//Remove leaves the combined seed sequence but removes the given part and all its related information
+func (contig *SeedContig) Remove(part int) {
+	index := 0
+	for ;index < len(contig.Parts); index++ {
+		if contig.Parts[index] == part {
+			break
+		}
+	}
+	last := len(contig.Parts)-1
+	if last != index {
+		contig.Parts[index] = contig.Parts[last]
+		contig.Lengths[index] = contig.Lengths[last]
+		contig.Offsets[index] = contig.Offsets[last]
+		contig.SeqLengths[index] = contig.SeqLengths[last]
+		contig.ReverseComplement[index] = contig.ReverseComplement[last]
+		contig.Approximate[index] = contig.Approximate[last]
+		contig.Matches[index] = contig.Matches[last]
+		contig.Matches[last] = nil
+	}
+	contig.Parts = contig.Parts[:last]
+	contig.Lengths = contig.Lengths[:last]
+	contig.Offsets = contig.Offsets[:last]
+	contig.SeqLengths = contig.SeqLengths[:last]
+	contig.ReverseComplement = contig.ReverseComplement[:last]
+	contig.Approximate = contig.Approximate[:last]
+	contig.Matches = contig.Matches[:last]
 }
 
 func BuildConsensus(sg *seeds.SeedIndex, overlaps []*seeds.SeedMatch) *SeedContig {

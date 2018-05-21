@@ -17,7 +17,7 @@ type mapCommand struct {
 func NewMapCommand() Command {
 	args, alias, desc := MakeArgs(
 		[]string{"input", "reference", "circular", "k", "query_size", "min_length", "chunk_size", "seed_rate", "num_workers"},
-		[]string{"", "", "true", "11", "1000", "500", "10000", "75", "4"},
+		[]string{"", "", "true", "11", "1000", "500", "10000", "40", "4"},
 		[]string{"Fasta/fastq input file", "A fasta file containing a reference sequence to align against", "Whether the reference genome is circular", "Length of seeds in bases", "The number of bases to query at a time", "The minimum sequence size to generate queries from","The number of bases for reference index chunks", "The maximum number of bases between seeds in the reference", "The number of worker process to use for mapping"})
 	cons := mapCommand{args: args, alias: alias, desc: desc}
 	return &cons

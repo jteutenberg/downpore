@@ -20,9 +20,9 @@ func BuildConsensus(contig *overlap.SeedContig, sequences []sequence.Sequence, m
 	seqMap := make([]int,0, len(contig.Parts)) //map used sequences to their indices in contig.Parts
 	//pick contigs to use
 	for i, id := range contig.Parts {
-		if contig.Approximate[i] {
-			continue
-		}
+		//if contig.Approximate[i] {
+		//	continue
+		//}
 		b := sequences[id]
 		start := contig.Offsets[i]
 		if contig.Matches == nil {

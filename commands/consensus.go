@@ -5,51 +5,7 @@ import (
 	"github.com/jteutenberg/downpore/model"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/sequence/alignment"
-	"os"
-	"runtime/pprof"
 )
-
-type fivemerMeasure struct{}
-
-func (m *fivemerMeasure) Distance(a, b uint16) uint {
-	if a == b {
-		return 0
-	}
-	a = a ^ b
-	if (a & 0xFC) == 0 { //00 11 11 11 00
-		return 1 //no difference in central 3mer
-	}
-	if (a & 0x30) == 0 { //00 00 11 00 00
-		return 2
-	}
-	return 3
-}
-func (m *fivemerMeasure) DistanceRC(a, b uint16) uint {
-	if a == b {
-		return 0
-	}
-	a = a ^ b
-	if (a & 0xFC) == 0 { //00 11 11 11 00
-		return 1 //no difference in central 3mer
-	}
-	if (a & 0x30) == 0 { //00 00 11 00 00
-		return 2
-	}
-	return 3
-}
-func (m *fivemerMeasure) Distance2D(a, b uint16) uint {
-	if a == b {
-		return 0
-	}
-	a = a ^ b
-	if (a & 0xFC) == 0 { //00 11 11 11 00
-		return 1 //no difference in central 3mer
-	}
-	if (a & 0x30) == 0 { //00 00 11 00 00
-		return 2
-	}
-	return 3
-}
 
 type consensusCommand struct {
 	args  map[string]string
@@ -100,24 +56,20 @@ func (com *consensusCommand) Run(args map[string]string) {
 	seqSet = sequence.NewFastaSequenceSet(args["rc_input"], 0, 1, false, false)
 	seqs = seqSet.GetSequences()
 	for seq := range seqs {
-		qs := seq.Quality()
+		/*qs := seq.Quality()
 		if qs == nil {
 			fmt.Println("no quality.")
 		} else {
 			fmt.Println(len(qs), "quality for", seq.Len())
-		}
+		}*/
 		kmerSeqs = append(kmerSeqs, seq.ShortKmers(k,false))
 	}
-
-	//m := &(fivemerMeasure{})
 	dtw := alignment.NewDTWAligner(maxWarp, initialGapCost, m, false, costThreshold, k)
 	//consensus 'em
 	rc := make([]bool, len(kmerSeqs), len(kmerSeqs))
 	for ; nonRC < len(rc); nonRC++ {
 		rc[nonRC] = true
 	}
-	f, _ := os.Create("./cprof")
-	pprof.StartCPUProfile(f)
 	m.SetSequences(kmerSeqs, rc)
 	kmers, costs, finalResult := dtw.GlobalConsensus()
 	first := true
@@ -126,7 +78,8 @@ func (com *consensusCommand) Run(args map[string]string) {
 	spaceString := ".."
 	consensus := make([]uint16, 0, 1000)
 	for kmer := range kmers {
-		cost := <-costs
+		<-costs
+		/*cost := <-costs
 		dc := cost.CostDelta
 		if dc > 0 {
 			dc = 1 + dc/30
@@ -144,7 +97,7 @@ func (com *consensusCommand) Run(args map[string]string) {
 		}
 		costsString = fmt.Sprint(costsString, dc)
 		votesString = fmt.Sprint(votesString, int(cost.ExactFraction*9.99))
-		spaceString = fmt.Sprint(spaceString, sp)
+		spaceString = fmt.Sprint(spaceString, sp)*/
 		consensus = append(consensus, kmer)
 		if first {
 			fmt.Print(sequence.KmerString(int(kmer), k))
@@ -159,7 +112,5 @@ func (com *consensusCommand) Run(args map[string]string) {
 	fmt.Println(votesString)
 	fmt.Println(spaceString)
 	<-finalResult
-	pprof.StopCPUProfile()
-	f.Close()
 	//fmt.Println("\n",cost,"over",len(consensus),"bases",dtw.ConsensusCost(consensus))
 }

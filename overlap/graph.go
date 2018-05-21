@@ -2,16 +2,19 @@ package overlap
 
 import (
 	"fmt"
-	//"github.com/jteutenberg/downpore/mapping"
+	"github.com/jteutenberg/downpore/seeds"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
+	"math"
 	"sync"
 )
 
-//Node represents an overlap of multiple sequences
+//Node represents one long sequence and all its overlapping sequences
+//Arcs out belong to all sequences that overhang the ends
 type Node struct {
 	id int
 	colour int
+	internalSequences []int
 	sequences []*sequenceArc
 	Consensus sequence.Sequence
 	in []*Arc
@@ -687,6 +690,161 @@ func (g *OverlapGraph) colour(seq *SequenceNode) {
 		if next == seq && len(open) == 0 {
 			//this means our first sequence had no children. Roll back the colours.
 			g.nextColour -= 2
+		}
+	}
+}
+
+func checkContainedSequence(id uint, futureContigs [][]*seeds.SeedMatch, seqSets []*util.IntSet, overlapSize, k int) (int, int){
+	rightMost := len(futureContigs)-1
+	for rightMost >= 1 && !seqSets[rightMost].Contains(id) {
+		rightMost--
+	}
+	if rightMost == 0 {
+		//only one hit. Just return.
+		return 0,0
+	}
+	diagonal := make([]int, 0, rightMost+1)
+	indices := make([]int, 0, rightMost+1)
+	for i, set := range seqSets[:rightMost+1] {
+		if set.Contains(id) {
+			indices = append(indices, i)
+			//find where this sequence is
+			j := 0
+			for j < len(futureContigs[i]) && futureContigs[i][j].SeqB.GetID() != int(id) {
+				j++
+			}
+			match := futureContigs[i][j]
+			//and determine the position on the diagonal
+			if match.ReverseComplementQuery {
+				diagonal = append(diagonal, match.SeqA.GetOffset()+match.SeqA.GetSeedOffset(match.MatchA[0],k) + match.SeqB.GetOffset() + match.SeqB.GetSeedOffset(match.MatchB[0],k))
+			} else {
+				diagonal = append(diagonal, match.SeqA.GetOffset()+match.SeqA.GetSeedOffset(match.MatchA[0],k) - match.SeqB.GetOffset() - match.SeqB.GetSeedOffset(match.MatchB[0],k))
+			}
+		}
+	}
+	//sort
+	util.SortByValue(indices, diagonal)
+	//and run a window across the diagonal, finding a good split to keep as many hits as possible
+	window := overlapSize/2
+	bestLength := 1
+	bestStart := -1
+	bestEnd := 0
+	start := -1
+	end := 0
+	for start < len(indices)-bestLength {
+		//step forward to the next spot
+		start++
+		first := diagonal[start]
+		//move the end forward up to window length
+		for end < len(indices) && first + window > diagonal[end] {
+			end++
+		}
+		if end-start >= bestLength {
+			bestLength = end-start
+			bestStart = start
+			bestEnd = end
+		}
+	}
+	//remove all the others
+	if bestLength == len(indices) {
+		//all are good!
+		return 0,rightMost
+	} else if bestLength == 1 {
+		//if we're dropping down to a single hit, just remove them all. Certain rubbish.
+		bestLength = 0
+	} else {
+		for i := bestStart; i < bestEnd; i++ {
+			fmt.Print(indices[i],",")
+			diagonal[i] = indices[i]-math.MaxInt32
+		}
+		util.SortByValue(indices, diagonal)
+	}
+	for _, index := range indices[bestLength:] {
+		set := seqSets[index]
+		if set.Contains(id) {
+			j := 0
+			for j < len(futureContigs[index]) && futureContigs[index][j].SeqB.GetID() != int(id) {
+				j++
+			}
+			futureContigs[index][j] = futureContigs[index][len(futureContigs[index])-1]
+			futureContigs[index] = futureContigs[index][:len(futureContigs[index])-1]
+			set.Remove(id)
+		}
+	}
+	if bestLength == 0 {
+		return -1,-1
+	}
+	return indices[0],indices[bestLength-1]
+}
+
+func hasOverhang(id uint, overlaps [][]*seeds.SeedMatch, leftIndex, rightIndex, overlapSize, k int) bool {
+	left := 0
+	for left < len(overlaps[leftIndex]) && overlaps[leftIndex][left].SeqB.GetID() != int(id) {
+		left++
+	}
+	var right int
+	if leftIndex == rightIndex {
+		right = left
+	} else {
+		for right < len(overlaps[rightIndex]) && overlaps[rightIndex][right].SeqB.GetID() != int(id) {
+			right++
+		}
+	}
+	leftMatch := overlaps[leftIndex][left]
+	rightMatch := overlaps[rightIndex][right]
+	var leftOverhang int
+	var rightOverhang int
+	if leftMatch.ReverseComplementQuery {
+		leftOverhang = leftMatch.SeqB.GetSeedOffsetFromEnd(leftMatch.MatchB[len(leftMatch.MatchB)-1],k)
+		rightOverhang = rightMatch.SeqB.GetSeedOffset(rightMatch.MatchB[0],k)
+	} else {
+		leftOverhang = leftMatch.SeqB.GetSeedOffset(leftMatch.MatchB[0],k)
+		rightOverhang = rightMatch.SeqB.GetSeedOffsetFromEnd(rightMatch.MatchB[len(rightMatch.MatchB)-1],k)
+	}
+	fmt.Println("RC=",leftMatch.ReverseComplementQuery,"/",rightMatch.ReverseComplementQuery,"Seq ",id," LHS overhang of ",leftOverhang, "from contig",leftIndex,"/",len(overlaps)," RHS overhang of ",rightOverhang," from contig ",rightIndex,"/",len(overlaps)," sequence length is",overlaps[leftIndex][left].SeqB.GetLength())
+	return (rightIndex < len(overlaps)-2 && rightOverhang > overlapSize*2) || (leftIndex > 1 && leftOverhang > overlapSize*2)
+}
+
+func CleanupOverlaps(overlaps [][]*seeds.SeedMatch, overlapSize, k int) {
+	//1. make sets of each overlaps' sequences
+	seqSets := make([]*util.IntSet, len(overlaps))
+	for i, overlap := range overlaps {
+		max := 0
+		for _, s := range overlap {
+			id := s.SeqB.GetID()
+			if id > max {
+				max = id
+			}
+		}
+		seqSets[i] = util.NewIntSetCapacity(max)
+		for _, s := range overlap {
+			seqSets[i].Add(uint(s.SeqB.GetID()))
+		}
+	}
+	//2. left-to-right, find which sequences map as expected across the contigs. Discard those that don't belong.
+	for i := 0; i < len(seqSets); i++ {
+		seqs := seqSets[i]
+		for ok,id := seqs.GetFirstID(); ok; ok,id = seqs.GetNextID(id) {
+			leftIndex, rightIndex := checkContainedSequence(id, overlaps[i:], seqSets[i:], overlapSize,k)
+			if leftIndex == -1 {
+				//in this case we removed all hits
+				continue
+			}
+			leftIndex += i
+			rightIndex += i
+			if hasOverhang(id, overlaps, leftIndex, rightIndex, overlapSize,k) {
+				for n := leftIndex; n <= rightIndex; n++ {
+					if seqSets[n].Contains(id) {
+						j := 0
+						for j < len(overlaps[n]) && overlaps[n][j].SeqB.GetID() != int(id) {
+							j++
+						}
+						overlaps[n][j] = overlaps[n][len(overlaps[n])-1]
+						overlaps[n] = overlaps[n][:len(overlaps[n])-1]
+						seqSets[n].Remove(id)
+					}
+				}
+			}
 		}
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -355,35 +354,20 @@ func (f *fastaSequenceSet) SetName(id int, name string) {
 	f.names[id] = name
 }
 
-type lengthSorter struct {
-	lengths []int
-	ids []int
-}
-func (d *lengthSorter) Len() int {
-	return len(d.ids)
-}
-func (d *lengthSorter) Less(i, j int) bool {
-	return d.lengths[i] > d.lengths[j]
-}
-func (d *lengthSorter) Swap(i, j int) {
-	d.ids[i], d.ids[j] = d.ids[j], d.ids[i]
-	d.lengths[i], d.lengths[j] = d.lengths[j], d.lengths[i]
-}
 
 func (f *fastaSequenceSet) GetIDsByLength() ([]int,[]int) {
-	byLength :=  lengthSorter{ids:make([]int, len(f.lengths)),lengths: make([]int, len(f.lengths)) }
+	ids := make([]int, len(f.lengths))
+	lengths := make([]int, len(f.lengths))
 	count := 0
 	for i, length := range f.lengths {
 		if !f.ignore[i] {
-			byLength.ids[count] = i
-			byLength.lengths[count] = length
+			ids[count] = i
+			lengths[count] = length
 			count++
 		}
 	}
-	byLength.lengths = byLength.lengths[:count]
-	byLength.ids = byLength.ids[:count]
-	sort.Sort(&byLength)
-	return byLength.ids,byLength.lengths
+	util.SortByValue(ids[:count],lengths[:count])
+	return ids[:count],lengths[:count]
 }
 
 func (f *fastaSequenceSet) SetIgnore(id int, ignore bool) {

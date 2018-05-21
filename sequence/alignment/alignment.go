@@ -106,11 +106,14 @@ func (m *simpleMeasure) Distances(a uint16, sequence, start int, ds []uint16) {
 	kmers := m.seqs[sequence]
 	end := start + len(ds)
 	if end > len(kmers) {
-		for i := len(ds) + len(kmers) - end; i < len(ds); i++ {
-			ds[i] = 1000
+		f := len(ds) + len(kmers) - end
+		if f < 0 {
+			f = 0
 		}
-		ds = ds[:len(ds)-end+len(kmers)]
-		end = len(kmers)
+		for i := f; i < len(ds); i++ {
+			ds[i] = 14
+		}
+		ds = ds[:f]//len(ds)-end+len(kmers)]
 	}
 	for i := 0; i < len(ds); i++ {
 		diff := kmers[start] ^ a
@@ -201,13 +204,38 @@ func (lm *landmark) isPriorLandmarkTo(otherSeqs []bool, otherPositions []int32) 
 	return true
 }
 
-func (lm *landmark) lockState(s *state, maxCost uint16) {
+func (lm *landmark) lockState(s *state, seqs [][]uint16, maxCost uint16) {
 	centre := int32(len(s.offsets[0]) / 2)
 	for j, p := range lm.positions {
 		if !lm.seqs[j] || p < s.positions[j]-centre {
 			continue
 		}
+		seq := seqs[j]
+		//remove any that don't match the landmark k-mer. Keep other possibilities alive.
+		offs := s.offsets[j]
+		newMin := maxCost
+		start := int(s.positions[j] - centre)
+		for n := 0; n < len(offs); n++ {
+			off := offs[n]
+			ip := start + n
+			if off < maxCost && ip >= 0 && ip < len(seq) {
+				if seq[ip] != lm.k {
+					offs[n] = maxCost
+				} else if off < newMin {
+					newMin = off
+				}
+			}
+		}
+		for n := 0; n < len(offs); n++ {
+			if offs[n] < maxCost {
+				offs[n] -= newMin
+			}
+		}
+		s.minCost += uint(newMin)
+		//old way: keep only the one k-mer at landmark position
+		/*
 		p -= s.positions[j] - centre
+		//p is now the landmark's offset from the beginning of the offset slice
 		offs := s.offsets[j]
 		if int(p) < len(offs) {
 			for n := 0; n < len(offs); n++ {
@@ -217,7 +245,7 @@ func (lm *landmark) lockState(s *state, maxCost uint16) {
 			}
 			s.minCost += uint(offs[p])
 			offs[p] = 0
-		}
+		}*/
 	}
 }
 
@@ -287,8 +315,12 @@ func (d *dtw) prepareDistances(seq int, kmer uint16, pos, start, end int) (int, 
 	}
 	seqStart := pos - centre + start
 	if seqStart < 0 {
-		start -= seqStart
+		start -= seqStart //push the start forward as we don't use "pre-sequence" bases
 		seqStart = 0
+		end -= seqStart
+		if end > len(d.ds) {
+			end = len(d.ds)
+		}
 	}
 	if start < 0 || start >= len(d.ds) || end < 0 || end > len(d.ds) || end <= start {
 		fmt.Println("Over distance! ", start, end, " at pos ", pos)
@@ -482,6 +514,7 @@ func (d *dtw) nextState(current []*state, next *[]*state, nextK uint16) bool {
 }
 
 func (d *dtw) nextStates(current []*state, next *[]*state) bool {
+	//debug = d.depth > 90
 	d.depth++
 	d.prevKmers.Clear()
 	minFinishedCost := uint(math.MaxUint32)
@@ -500,7 +533,8 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 	}
 	maxDelta := uint(len(current[0].offsets)/2) * uint(d.costThreshold)
 	lowestCost += maxDelta
-	for m, s := range current {
+	for m := 0; m < len(current); m++ {
+		s := current[m]
 		if s.finished {
 			//keep hold of all the finished states. Let the remainder look a bit further ahead.
 			if minFinishedCost >= s.minCost {
@@ -522,7 +556,11 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 		update := d.prevKmers.Contains(iShift)
 		added := false
 		if debug {
-			fmt.Println("SUCCESSORS OF", sequence.KmerString(int(s.k), int(d.k)), "at", s.nextLandmark, "/", len(d.landmarks))
+			fmt.Print("SUCCESSORS OF ", sequence.KmerString(int(s.k), int(d.k)), " at ", s.nextLandmark, "/", len(d.landmarks))
+			if s.prev != nil {
+				fmt.Print(" Prior:",sequence.KmerString(int(s.prev.k), int(d.k)))
+			}
+			fmt.Println()
 		}
 		//four possible steps of k-mer
 		for i := uint16(0); i < 4; i++ {
@@ -539,9 +577,8 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 			lastVoted := -1
 			lastVotedIndex := -1
 			var extraCost uint
-			if d.full {
-				successor.finished = true
-			}
+			successor.finished = d.full
+			
 			for j, p := range s.positions {
 				successor.positions[j] = p + 1
 				minIndex, exactMatch, cost, finished := d.updateCosts(&successor, s, j)
@@ -606,56 +643,75 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 				}
 			}
 			if !successor.finished && d.depth > initialOffset && votes > len(s.offsets)/2 {
+				//then look into the landmark possibility
 				lmPositions := make([]int32, len(s.offsets), len(s.offsets))
 				lmSeq := make([]bool, len(s.offsets), len(s.offsets))
 				lmCost := successor.minCost
 				seqs, _ := d.measure.GetSequences()
+				newVotes := 0
 				for j, pos := range successor.positions {
 					seq := seqs[j]
 					seqLen := int32(len(seq))
 					offs := successor.offsets[j]
-					if pos < seqLen && seq[pos] == nextK {
+					off := offs[len(offs)/2]
+					if pos > initialOffset && pos < seqLen && seq[pos] == nextK && off < d.maxCost {
+						//the jth sequence matches the k-mer
+						lmSeq[j] = true
 						lmPositions[j] = pos
-						off := offs[len(offs)/2]
-						lmSeq[j] = off < d.maxCost
-						if off < d.maxCost {
-							lmCost += uint(off)
-						}
+						lmCost += uint(off)
+						newVotes++
 					} else {
+						bestOff := d.maxCost
+						var bestPos int32
 						for k := int32(1); k < 16; k++ {
-							if pos+k < seqLen && seq[pos+k] == nextK {
-								lmPositions[j] = pos + k
+							if pos+k > initialOffset && pos+k < seqLen && seq[pos+k] == nextK {
 								off := offs[len(offs)/2+int(k)]
-								lmSeq[j] = off < d.maxCost
-								if off < d.maxCost {
-									lmCost += uint(off)
+								if off < bestOff {
+									bestPos = pos+k
+									bestOff = off
 								}
-								break
 							}
-							if pos-k >= 0 && pos-k < seqLen && seq[pos-k] == nextK {
-								lmPositions[j] = pos - k
+							if pos-k > initialOffset && pos-k < seqLen && seq[pos-k] == nextK {
 								off := offs[len(offs)/2-int(k)]
-								lmSeq[j] = off < d.maxCost
-								if off < d.maxCost {
-									lmCost += uint(off)
+								if off < bestOff {
+									bestPos = pos-k
+									bestOff = off
 								}
-								break
 							}
+						}
+						if bestOff < d.maxCost {
+							lmSeq[j] = true
+							lmPositions[j] = bestPos
+							lmCost += uint(bestOff)
+							newVotes++
 						}
 					}
 				}
+				if newVotes < len(s.offsets)/2 {
+					goto LandmarksEnd
+				}
 				if debug {
-					fmt.Println("LANDMARK voted", votes, sequence.KmerString(int(nextK), int(d.k)), "at", lmPositions, lmCost)
+					fmt.Println("LANDMARK voted", votes, sequence.KmerString(int(nextK), int(d.k)), "at", lmPositions, lmCost,"from pos",successor.positions)
+					t := &successor
+					for t != nil {
+						fmt.Print(sequence.KmerString(int(t.k), int(d.k))," ")
+						t = t.prev
+					}
+					fmt.Println()
 				}
 				//this landmark needs to be before my next one
 				if successor.nextLandmark < len(d.landmarks) && d.landmarks[successor.nextLandmark].isPriorLandmarkTo(lmSeq, lmPositions) {
+					if debug {
+						fmt.Println("this landmark is after the one I'm looking for. Oops, I've skipped ahead.")
+					}
 					continue
 				}
 				var mark *landmark
 				deleteAfter := true
 				updatedLandmark := false //have I reduced the cost of an existing landmark?
 				skippedLandmark := false //have I gone past a required landmark?
-				//test for existing landmark, include one prior
+				//test for existing landmark, include one prior.
+				//If it matches the prior one, we do nothing, including not adding a new landmark.
 				if len(d.landmarks) > 0 {
 					j := 0
 					if successor.nextLandmark > 0 {
@@ -670,17 +726,32 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 								fmt.Println("matches an existing landmark at", j, "my next was", successor.nextLandmark, ". cost:", lmCost, "vs", lm.cost, sequence.KmerString(int(nextK), int(d.k)), "and", sequence.KmerString(int(lm.k), int(d.k)))
 							}
 							//delete me or update the landmark? Only if I've passed all other landmarks
+							if j > successor.nextLandmark-1 {
+								if debug {
+									fmt.Println("Ignoring repeat match. Moving on")
+								}
+								// a repeat match. Ignore.
+								goto LandmarksEnd
+							}
 							if !skippedLandmark && lm.cost > lmCost {
+								if debug {
+									fmt.Println("Updating the landmark")
+								}
 								lm.cost = lmCost
 								lm.positions = lmPositions
 								lm.seqs = lmSeq
-								lm.lockState(&successor, d.maxCost)
+								lm.lockState(&successor, seqs, d.maxCost)
 								//all later landmarks are invalid now
 								d.landmarks = d.landmarks[:j+1]
 								updatedLandmark = true
 							} else {
 								successor.nextLandmark = j + 1
-								deleteAfter = false
+								lm.lockState(&successor, seqs, d.maxCost)
+								//deleteAfter = false
+								if debug {
+									fmt.Println("Landmark achieved.",successor.nextLandmark,"/",len(d.landmarks))
+								}
+								goto LandmarksEnd
 							}
 							break
 						}
@@ -697,6 +768,11 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 					for newLen > 0 && mark.isPriorLandmarkTo(d.landmarks[newLen-1].seqs, d.landmarks[newLen-1].positions) {
 						newLen--
 					}
+					//if this is going to repeat the previous landmark, then we stop here: No Repeats.
+					if newLen > 0 && d.landmarks[newLen-1].k == lm.k {
+						goto LandmarksEnd
+					}
+					//otherwise, continue to update the landmarks
 					d.landmarks = d.landmarks[:newLen]
 					d.landmarks = append(d.landmarks, mark)
 					successor.nextLandmark = len(d.landmarks)
@@ -704,7 +780,7 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 						fmt.Println("adding new landmark", lmPositions)
 					}
 					//collapse self to only the landmark position
-					mark.lockState(&successor, d.maxCost)
+					mark.lockState(&successor, seqs, d.maxCost)
 					landmarkAdded = true
 				}
 				if deleteAfter {
@@ -712,30 +788,64 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 					for j := len(*next) - 1; j >= 0; j-- {
 						n := (*next)[j]
 						//if this is my previously achieved landmark but with an updated cost.. I should be removed
-						if (updatedLandmark && n.nextLandmark >= len(d.landmarks)-1) || mark.isPriorTo(n.positions) || n.minCost > mark.cost {
+						if (updatedLandmark && n.nextLandmark >= len(d.landmarks)) || mark.isPriorTo(n.positions) || n.minCost > mark.cost {
+							if debug {
+								fmt.Println("Removing state ",sequence.KmerString(int(n.k),int(d.k)),"at landmark",n.nextLandmark,"/",len(d.landmarks))
+								fmt.Println("Updated earlier landmark:",updatedLandmark && n.nextLandmark >= len(d.landmarks)-1)
+								fmt.Println("Landmark is prior ", mark.isPriorTo(n.positions))
+								fmt.Println("Cost! ",n.minCost > mark.cost, n.minCost," lmcost:",mark.cost)
+							}
 							(*next)[j] = (*next)[len(*next)-1]
 							*next = (*next)[:len(*next)-1]
-						} else if n.nextLandmark > len(d.landmarks)-1 {
-							//otherwise, they have to achieve this landmark at some point
-							n.nextLandmark = len(d.landmarks) - 1
+						} else {
+							//other possiblity. We went through the landmark with insufficient votes. For speed we only check self and predecessor?
+							if n.k == nextK && n.minCost < mark.cost && mark.matches(n.positions) {
+								n.nextLandmark = len(d.landmarks)
+								mark.cropState(n, d.maxCost)
+							} else if n.prev != nil && ((n.prev.k == nextK && n.prev.minCost < mark.cost && mark.matches(n.prev.positions)) || (n.prev.prev != nil && n.prev.prev.k == nextK && n.prev.prev.minCost < mark.cost && mark.matches(n.prev.prev.positions))){
+								n.nextLandmark = len(d.landmarks)
+								mark.cropState(n, d.maxCost)
+							} else if n.nextLandmark > len(d.landmarks)-1 {
+								//otherwise, they have to achieve this landmark at some point
+								n.nextLandmark = len(d.landmarks) - 1
+							}
 						}
 					}
-					//any upcoming states must be prior to this too
+					//any upcoming states must be prior to this too. Or have already gone through it.
 					for j := len(current) - 1; j >= m+1; j-- {
-						if current[j].nextLandmark >= len(d.landmarks)-1 && current[j].k == mark.k && mark.matches(current[j].positions) {
-							current[j].nextLandmark = len(d.landmarks) //achieved the new landmark just now!
-							mark.cropState(current[j], d.maxCost)      //make sure we can't jump back before it again
-						} else if (updatedLandmark && current[j].nextLandmark >= len(d.landmarks)-1) || current[j].minCost > mark.cost || mark.isPriorTo(current[j].positions) {
+						//only remove states that are at least up to this landmark
+						if current[j].nextLandmark >= len(d.landmarks)-1 {
+							//1. Is this in our history (just not enough votes for a landmark back then)?
+							var match *state
+							if current[j].k == mark.k && mark.matches(current[j].positions) {
+								match = current[j]
+							} else if current[j].prev != nil && current[j].prev.k == mark.k && mark.matches(current[j].prev.positions) {
+								match = current[j].prev
+							} else if current[j].prev != nil && current[j].prev.prev != nil && current[j].prev.prev.k == mark.k && mark.matches(current[j].prev.prev.positions) {
+								match = current[j].prev.prev
+							}
+							if match != nil && match.minCost <= mark.cost {
+								//so we've already acheived this one. Sorted.
+								current[j].nextLandmark = len(d.landmarks)
+								mark.cropState(current[j], d.maxCost)
+							} else if mark.isPriorTo(current[j].positions) || mark.cost < current[j].minCost {
+								//otherise, its not working towards this one, or it'll never improve it, so remove it
+								current[j] = current[len(current)-1]
+								current = current[:len(current)-1]
+							} else {
+								//working towards this landmark now
+								current[j].nextLandmark = len(d.landmarks) - 1
+							}
+						} else if updatedLandmark && mark.isPriorTo(current[j].positions) {
 							current[j] = current[len(current)-1]
 							current = current[:len(current)-1]
-						} else if current[j].nextLandmark >= len(d.landmarks) {
-							current[j].nextLandmark = len(d.landmarks) - 1
 						}
 					}
 				} else {
 					continue //this matched another landmark and was more expensive
 				}
 			}
+			LandmarksEnd:
 			if minFinishedCost >= successor.minCost {
 				added = true
 				if update {
