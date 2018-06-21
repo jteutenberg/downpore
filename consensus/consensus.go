@@ -14,19 +14,25 @@ import (
 
 func BuildConsensus(contig *overlap.SeedContig, sequences []sequence.Sequence, model model.Model, fullMatch bool) (*overlap.SeedContig, sequence.Sequence) {
 	//fmt.Print("consensus from ",len(contig.Parts),"sequences...")
-	k := int(model.GetK())
+	k := 5
+	costThreshold := uint(200) //get from model
+	initialGapCost := uint(5)
+	if model != nil {
+		k = int(model.GetK())
+		initialGapCost = uint(2)
+	}
 	seqs := make([][]uint16, 0, len(contig.Parts))
 	rcs := make([]bool, 0, len(contig.Parts))
 	seqMap := make([]int,0, len(contig.Parts)) //map used sequences to their indices in contig.Parts
 	//pick contigs to use
 	for i, id := range contig.Parts {
-		//if contig.Approximate[i] {
-		//	continue
-		//}
+		if contig.Approximate[i] {
+			continue
+		}
 		b := sequences[id]
 		start := contig.Offsets[i]
 		if contig.Matches == nil {
-			fmt.Println("Part",i," id/rc:",id,contig.ReverseComplement[i]," from ",contig.Offsets[i], " for ",contig.Lengths[i])
+			fmt.Println("Part",i," id/rc:",id,contig.ReverseComplement[i]," from ",contig.Offsets[i], " for ",contig.Lengths[i],"approx=",contig.Approximate[i])
 		}
 		if start < 0 {
 			if start < -5 { //bad start, ignore
@@ -50,19 +56,23 @@ func BuildConsensus(contig *overlap.SeedContig, sequences []sequence.Sequence, m
 			b = b.ReverseComplement()
 		}
 		rcs = append(rcs, contig.ReverseComplement[i])
-		seqs = append(seqs, b.ShortKmers(k, false))// b.SubSequence(start,end).ShortKmers(k))
+		seqs = append(seqs, b.ShortKmers(k, false))
 		seqMap = append(seqMap, i)
 	}
 	if len(seqs) < 3 {
+		fmt.Println("Down to",len(seqs),"from",len(contig.Parts),"due to approximate end matching.")
 		return nil, nil
 	}
 	//fmt.Println("using",len(seqs),"ones with good start locations")
 
 	//Perform consensus on these subsequences
 	maxWarp := 16 //fixed to 2x16 actually
-	initialGapCost := uint(2)
-	costThreshold := uint(100)
-	mod := model.Clone()
+	var mod alignment.Measure
+	if model != nil {
+		mod = model.Clone()
+	} else {
+		mod = alignment.NewFivemerMeasure()
+	}
 	mod.SetSequences(seqs, rcs)
 
 	dtw := alignment.NewDTWAligner(maxWarp,initialGapCost, mod, fullMatch, costThreshold, k)
@@ -73,7 +83,7 @@ func BuildConsensus(contig *overlap.SeedContig, sequences []sequence.Sequence, m
 	var endPositions []int
 	for kmer := range kmers {
 		<-costs
-		endPositions = <-pos //TODO: this is using collapsed homopolymers: incorrect sequence position!
+		endPositions = <-pos
 		if startPositions == nil {
 			startPositions = endPositions
 		}

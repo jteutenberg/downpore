@@ -46,11 +46,6 @@ type QualityMetrics struct {
 	StateSpaceSize int
 }
 
-type simpleMeasure struct {
-	seqs [][]uint16
-	rcs  []bool
-}
-
 type dtw struct {
 	maxWarp        int //the farthest divergence from the linear alignment (in bases)
 	maxCost        uint16
@@ -62,7 +57,7 @@ type dtw struct {
 	k                 int //k-mer length
 	prevKmers         *util.IntSet
 	kMask             uint16
-	ds                []uint16
+	ds                []uint16 //local distances, beam size
 	landmarks         []*landmark
 	expectedPositions []int32
 	depth             int32
@@ -81,52 +76,13 @@ type state struct {
 	offsets      [][]uint16 //probability (cost) of each position (relative to lowest cost value)
 	prev         *state     //prior state, one k-mer prior
 	minCost      uint       //sum of lowest costs over all offsets
-	votes        int        //number of exact matches for k
+	votes        float64    //number of exact matches for k, weighted by quality
 	spaceSize    int        //size of the state space when this was entered
 	finished     bool       //if all seqs have reached their end (i.e. best pos is at len(seqs[i])-1)
 	nextLandmark int        //which (current) landmark this is working towards
+	quality      []float64  //local quality measure, used to weigh votes
 }
 
-func NewFivemerMeasure() Measure {
-	sm := simpleMeasure{}
-	return &sm
-}
-
-func (m *simpleMeasure) SetSequences(seqs [][]uint16, rc []bool) {
-	m.seqs = seqs
-	m.rcs = rc
-}
-func (m *simpleMeasure) GetSequences() ([][]uint16, []bool) {
-	return m.seqs, m.rcs
-}
-func (m *simpleMeasure) GetSequenceLen(index int) int {
-	return len(m.seqs[index])
-}
-func (m *simpleMeasure) Distances(a uint16, sequence, start int, ds []uint16) {
-	kmers := m.seqs[sequence]
-	end := start + len(ds)
-	if end > len(kmers) {
-		f := len(ds) + len(kmers) - end
-		if f < 0 {
-			f = 0
-		}
-		for i := f; i < len(ds); i++ {
-			ds[i] = 14
-		}
-		ds = ds[:f]//len(ds)-end+len(kmers)]
-	}
-	for i := 0; i < len(ds); i++ {
-		diff := kmers[start] ^ a
-		//weighted sum of differences
-		cost := (((diff >> 4) | (diff >> 5)) & 0x1) << 3 //centre: cost 8 for mismatch
-		cost += (((diff >> 6) | (diff >> 7)) & 0x1) << 1 //one out: cost 2 for mismatch
-		cost += (((diff >> 2) | (diff >> 3)) & 0x1) << 1
-		cost += (((diff >> 1) | diff) & 0x1)    //edges: cost 1 for mismatch
-		cost += (((diff >> 8) | diff>>9) & 0x1) //edges: cost 1 for mismatch
-		ds[i] = cost
-		start++
-	}
-}
 
 func (s *state) printOffsets() {
 	for j, offsets := range s.offsets {
@@ -249,19 +205,25 @@ func (lm *landmark) lockState(s *state, seqs [][]uint16, maxCost uint16) {
 	}
 }
 
-func (lm *landmark) cropState(s *state, maxCost uint16) {
+func (lm *landmark) cropState(s *state, seqs [][]uint16, maxCost uint16) {
 	centre := int32(len(s.offsets[0]) / 2)
 	for j, p := range lm.positions {
 		if !lm.seqs[j] {
 			continue
 		}
-		p -= s.positions[j] - centre
+		pos := int(s.positions[j]-centre)
+		p -= int32(pos)
 		offs := s.offsets[j]
 		if p >= int32(len(offs)) || p < 0 {
 			continue //this one didn't reach the landmark at all
 		}
 		for n := 0; n < int(p); n++ {
-			offs[n] = maxCost
+			if n+pos < 0 || seqs[j][n+pos] != lm.k {
+				offs[n] = maxCost
+			} else {
+				p = int32(n)
+				break
+			}
 		}
 		newMin := maxCost
 		for n := int(p); n < len(offs); n++ {
@@ -271,12 +233,14 @@ func (lm *landmark) cropState(s *state, maxCost uint16) {
 		}
 		s.minCost += uint(newMin)
 		for n := int(p); n < len(offs); n++ {
-			offs[n] -= newMin
+			if offs[n] < maxCost {
+				offs[n] -= newMin
+			}
 		}
 	}
 }
 
-func fixDrift(s *state, bestPos, index int, maxCost uint16) {
+func fixDrift(s *state, bestPos, index int, maxCost uint16) int {
 	offs := s.offsets[index]
 	centre := len(offs) / 2
 	//have we drifted too far?
@@ -299,12 +263,18 @@ func fixDrift(s *state, bestPos, index int, maxCost uint16) {
 		for i := 0; i < drift; i++ {
 			offs[i] = maxCost
 		}
+	} else {
+		return 0
 	}
 	//so each offset now contains the cheapest seq[offset]->kmer match available from all possible aligments that get there
+	return drift
 }
 
 func updateOffsetsAsm(ds, poffs, offsets []uint16, threshold uint16) uint16
 
+//pos: sequence position at centre of offsets
+//start/end: region of offsets to get distances for, to be written to d.ds at same locations
+//returns: final start,end region used -- always with original start to end
 func (d *dtw) prepareDistances(seq int, kmer uint16, pos, start, end int) (int, int) {
 	centre := len(d.ds) / 2
 	if start < 0 {
@@ -313,24 +283,25 @@ func (d *dtw) prepareDistances(seq int, kmer uint16, pos, start, end int) (int, 
 	if end > len(d.ds) {
 		end = len(d.ds)
 	}
-	seqStart := pos - centre + start
+	seqStart := pos - centre + start //sequence position of first distance measure
+	seqs,_ := d.measure.GetSequences()
+	//seqs,qs,_ := d.measure.GetSequences()
 	if seqStart < 0 {
 		start -= seqStart //push the start forward as we don't use "pre-sequence" bases
 		seqStart = 0
-		end -= seqStart
-		if end > len(d.ds) {
-			end = len(d.ds)
+		if end < start {
+			end = start
 		}
 	}
-	if start < 0 || start >= len(d.ds) || end < 0 || end > len(d.ds) || end <= start {
-		fmt.Println("Over distance! ", start, end, " at pos ", pos)
+	if pos-centre+end >= len(seqs[seq]) {
+		end = len(seqs[seq])-pos+centre
 	}
 	d.measure.Distances(kmer, seq, seqStart, d.ds[start:end])
 	for i := 0; i < start; i++ {
-		d.ds[i] = 1256
+		d.ds[i] = d.maxCost/4//a large number that is less than half d.maxCount
 	}
 	for i := end; i < len(d.ds); i++ {
-		d.ds[i] = 1256
+		d.ds[i] = d.maxCost/4
 	}
 	//add distance from expected position
 	exp := int(d.depth + d.expectedPositions[seq])
@@ -341,6 +312,17 @@ func (d *dtw) prepareDistances(seq int, kmer uint16, pos, start, end int) (int, 
 		} else if delta > 16 {
 			d.ds[i] += uint16(delta - 16)
 		}
+		//and multiply by quality
+		//TODO: think about all consequences of this. It's not obvious.
+		/*if qs != nil && qs[seq] != nil {
+			//low quality can shift around, so lower distance
+			if d.ds[i] < d.maxCost {
+				if pos-centre+i >= len(qs[seq]) {
+					fmt.Println("At ",pos-centre+i," / ",len(qs[seq])," or ",len(seqs[seq]),"cost is ",d.ds[i]," considering from ",start,end,"around",pos)
+				}
+				d.ds[i] *= qs[seq][pos-centre+i]
+			}
+		}*/
 	}
 
 	return start, end
@@ -370,7 +352,7 @@ func getZeroPos(values []uint16, start, end int) int {
 	return len(values) / 2
 }
 
-func (d *dtw) updateCosts(s *state, prev *state, index int) (int, bool, uint16, bool) {
+func (d *dtw) updateCosts(s *state, prev *state, index int) (int, int, uint16, bool) {
 	//distances
 	centre := len(s.offsets[index]) / 2
 	pos := int(s.positions[index])
@@ -385,12 +367,18 @@ func (d *dtw) updateCosts(s *state, prev *state, index int) (int, bool, uint16, 
 	}
 	minCost := updateOffsetsAsm(d.ds, poffs, offsets, d.costThreshold)
 	minPos := getZeroPos(offsets, start, end)
-	exact := false
-	for i := start; !exact && i < end; i++ {
-		exact = d.ds[i] == 0 && offsets[i] < d.maxCost
+	exact := -1
+	exactCost := d.maxCost
+	for i := start; i < end; i++ {
+		if d.ds[i] == 0 && offsets[i] < exactCost {
+			exactCost = offsets[i]
+			exact = i+start
+		}
 	}
 	if d.depth > initialOffset {
-		fixDrift(s, minPos, index, d.maxCost)
+		delta := fixDrift(s, minPos, index, d.maxCost)
+		minPos += delta
+		pos -= delta
 	}
 	return minPos, exact, uint16(minCost), pos+minPos-centre >= d.measure.GetSequenceLen(index)-1
 }
@@ -403,7 +391,7 @@ func (s *state) traceBack(kmers chan uint16, costs chan *QualityMetrics) *state 
 		final = s.prev.traceBack(kmers, costs)
 		s.prev = nil //help the GC
 	}
-	cost.ExactFraction = float64(s.votes) / float64(len(s.offsets))
+	cost.ExactFraction = s.votes
 	cost.StateSpaceSize = s.spaceSize
 	kmers <- s.k
 	costs <- &cost
@@ -457,7 +445,7 @@ func (s *state) traceBackFullAt(currentPos []int, kmers chan uint16, costs chan 
 		final = s.prev.traceBackFullAt(pos, kmers, costs, positions)
 		s.prev = nil //help the GC
 	}
-	cost.ExactFraction = float64(s.votes) / float64(len(s.offsets))
+	cost.ExactFraction = s.votes
 	cost.StateSpaceSize = s.spaceSize
 	kmers <- s.k
 	costs <- &cost
@@ -472,9 +460,9 @@ func (d *dtw) nextState(current []*state, next *[]*state, nextK uint16) bool {
 		*next = append(*next, s)
 		return true
 	}
-	successor := state{nextK, make([]int32, len(s.positions), len(s.positions)), make([][]uint16, len(s.offsets), len(s.offsets)), s, s.minCost, 1, 1, false, s.nextLandmark}
+	successor := state{nextK, make([]int32, len(s.positions)), make([][]uint16, len(s.offsets)), s, s.minCost, 1, 1, false, s.nextLandmark,make([]float64,len(s.positions))}
 	for j := 0; j < len(successor.offsets); j++ {
-		successor.offsets[j] = make([]uint16, len(s.offsets[j]), len(s.offsets[j]))
+		successor.offsets[j] = make([]uint16, len(s.offsets[j]))
 	}
 	if d.full {
 		successor.finished = true
@@ -487,16 +475,6 @@ func (d *dtw) nextState(current []*state, next *[]*state, nextK uint16) bool {
 		if !finished {
 			tailGap += uint(d.measure.GetSequenceLen(j) - 1 - int(successor.positions[j]))
 		}
-		/*if debug {
-			for _, off := range successor.offsets[j] {
-				if off > 30000 {
-					fmt.Print("- ")
-				} else {
-					fmt.Print(off," ")
-				}
-			}
-			fmt.Println("\n",successor.positions[j],ex)
-		}*/
 		if d.full {
 			successor.finished = successor.finished && finished
 		} else {
@@ -506,9 +484,6 @@ func (d *dtw) nextState(current []*state, next *[]*state, nextK uint16) bool {
 	if successor.finished {
 		successor.minCost += tailGap * uint(d.initialGapCost)
 	}
-	//if debug{
-	//	fmt.Println(sequence.KmerString(int(successor.k),int(d.k)))
-	//}
 	*next = append(*next, &successor)
 	return successor.finished
 }
@@ -531,7 +506,10 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 			minFinishedCost = s.minCost
 		}
 	}
-	maxDelta := uint(len(current[0].offsets)/2) * uint(d.costThreshold)
+	seqs, _ := d.measure.GetSequences()
+	vs := make([]uint16, len(seqs))
+	centre := len(current[0].offsets[0])/2
+	maxDelta := uint(centre) * uint(d.costThreshold)
 	lowestCost += maxDelta
 	for m := 0; m < len(current); m++ {
 		s := current[m]
@@ -562,31 +540,79 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 			}
 			fmt.Println()
 		}
+		//get the mean quality across this region for each sequence. This is their voting weight.
+		for i := 0; i < len(vs); i++ {
+			vs[i] = uint16(8.0*s.quality[i]+0.5)
+		}
+
 		//four possible steps of k-mer
 		for i := uint16(0); i < 4; i++ {
 			nextK := shifted | i
-			if nextK == s.k { //homopolymer
-				continue
-			}
-			successor := state{nextK, make([]int32, len(s.positions), len(s.positions)), make([][]uint16, len(s.offsets), len(s.offsets)), s, s.minCost, 0, 0, false, s.nextLandmark}
+			successor := state{nextK, make([]int32, len(s.positions)), make([][]uint16, len(s.offsets)), s, s.minCost, 0, 0, false, s.nextLandmark, make([]float64, len(s.positions))}
 			for j := 0; j < len(successor.offsets); j++ {
-				successor.offsets[j] = make([]uint16, len(s.offsets[j]), len(s.offsets[j]))
+				successor.offsets[j] = make([]uint16, len(s.offsets[j]))
 			}
+			copy(successor.quality,s.quality)
 
-			votes := 0 //number of exact matches
+			var voteSum uint16 //exact matches, weighted by quality
+			var maxVotes uint16
+			singleVote := true // <= 1 vote
 			lastVoted := -1
 			lastVotedIndex := -1
 			var extraCost uint
 			successor.finished = d.full
-			
+			vCount := 0
+
 			for j, p := range s.positions {
 				successor.positions[j] = p + 1
 				minIndex, exactMatch, cost, finished := d.updateCosts(&successor, s, j)
-				if exactMatch {
-					votes++
+				if exactMatch >= 0 && nextK == s.k { //homopolymer repeat
+					//the earliest matching k-mer (assumed to be a stay) shall be ruled out
+					pos := int(successor.positions[j])-centre
+					newMin := d.maxCost
+					for n := 0; n <= minIndex && pos < len(seqs[j]); n++ {
+						cost := successor.offsets[j][n]
+						if pos >= 0 && cost < d.maxCost && seqs[j][pos] == nextK {
+							successor.offsets[j][n] = d.maxCost
+
+						} else if cost < newMin {
+							newMin = cost
+							minIndex = n
+						}
+						pos++
+					}
+					exactMatch = -1
+					for n := minIndex+1; n < len(successor.offsets[j]) && pos < len(seqs[j]); n++ {
+						cost := successor.offsets[j][n]
+						if cost < d.maxCost && seqs[j][pos] == nextK {
+							exactMatch = n
+							minIndex = n
+						}
+						if cost < newMin {
+							newMin = cost
+						}
+					}
+					if newMin != 0 {
+						for n, cost := range successor.offsets[j] {
+							if cost < d.maxCost {
+								successor.offsets[j][n] -= newMin
+							}
+						}
+					}
+					cost = newMin
+				}
+				if exactMatch >= 0 {
+					singleVote = voteSum == 0
+					voteSum += vs[j]
+					vCount++
 					lastVoted = j
 					lastVotedIndex = minIndex
+					successor.quality[j] = 1.0
+				} else {
+					successor.quality[j] *= 0.95 //lower quality of this sequence
 				}
+				maxVotes += vs[j]
+
 				extraCost += uint(cost)
 				if d.full {
 					successor.finished = successor.finished && finished
@@ -594,9 +620,15 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 					successor.finished = successor.finished || finished
 				}
 			}
+			if maxVotes == 0 {
+				continue
+			}
 			//successor.minCost += (2*extraCost) / uint(votes+1)
 			successor.minCost += extraCost
-			successor.votes = votes
+
+			votes := float64(voteSum)/ float64(maxVotes)
+			//just store the vote count
+			successor.votes = float64(vCount)/ float64(len(seqs))
 			if successor.finished {
 				if minFinishedCost > successor.minCost {
 					minFinishedCost = successor.minCost
@@ -605,17 +637,23 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 			if debug {
 				fmt.Println(i, "child present in", votes, "and min cost up by", extraCost, "from", s.minCost, "=", successor.minCost)
 			}
-			if votes == 0 { //not present in any sequence at any relevant position
+			if voteSum == 0 {//{ //not present in any sequence at any relevant position
 				continue
 			}
-			if votes == 1 {
+			if singleVote {
 				//remove all from offset except the exact match
 				successor.minCost += uint(successor.offsets[lastVoted][lastVotedIndex])
+				if debug {
+					fmt.Println("Fixed to single pos on sequence",lastVoted,"at index",lastVotedIndex," cost now: ",successor.minCost)
+				}
+				dc := successor.offsets[lastVoted][lastVotedIndex]
+				s := seqs[lastVoted]
+				off := int(successor.positions[lastVoted]) - len(successor.offsets)/2
 				for n, _ := range successor.offsets[lastVoted] {
-					if n != lastVotedIndex {
+					if n != lastVotedIndex && n+off >= 0 && n+off < len(s) && s[n+off] != successor.k {
 						successor.offsets[lastVoted][n] = d.maxCost
 					} else {
-						successor.offsets[lastVoted][n] = 0
+						successor.offsets[lastVoted][n] -= dc
 					}
 				}
 			}
@@ -631,24 +669,23 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 				}
 				if nextK == lm.k && lm.matches(successor.positions) {
 					if debug {
-						fmt.Println("Reached my next landmark. Crop=", votes <= len(successor.offsets)/2)
+						fmt.Println("Reached my next landmark. Crop=", votes <= 0.5)
 					}
 					//we're at the landmark, but only continue if we are a better alternative??
-					if votes <= len(successor.offsets)/2 {
-						lm.cropState(&successor, d.maxCost) //make sure we can't jump back before it again
+					if votes <= 0.5 {
+						lm.cropState(&successor, seqs, d.maxCost) //make sure we can't jump back before it again
 					}
 					successor.nextLandmark++
 				} else if lm.isPriorTo(successor.positions) {
 					continue //discard this landmark violator!
 				}
 			}
-			if !successor.finished && d.depth > initialOffset && votes > len(s.offsets)/2 {
+			if !successor.finished && d.depth > initialOffset && votes > 0.5 {
 				//then look into the landmark possibility
 				lmPositions := make([]int32, len(s.offsets), len(s.offsets))
 				lmSeq := make([]bool, len(s.offsets), len(s.offsets))
 				lmCost := successor.minCost
-				seqs, _ := d.measure.GetSequences()
-				newVotes := 0
+				var landVotes uint16
 				for j, pos := range successor.positions {
 					seq := seqs[j]
 					seqLen := int32(len(seq))
@@ -659,7 +696,7 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 						lmSeq[j] = true
 						lmPositions[j] = pos
 						lmCost += uint(off)
-						newVotes++
+						landVotes += vs[j]
 					} else {
 						bestOff := d.maxCost
 						var bestPos int32
@@ -683,15 +720,16 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 							lmSeq[j] = true
 							lmPositions[j] = bestPos
 							lmCost += uint(bestOff)
-							newVotes++
+							landVotes += vs[j]
 						}
 					}
 				}
-				if newVotes < len(s.offsets)/2 {
+				newVotes := float64(landVotes) / float64(maxVotes)
+				if newVotes <= 0.5 {
 					goto LandmarksEnd
 				}
 				if debug {
-					fmt.Println("LANDMARK voted", votes, sequence.KmerString(int(nextK), int(d.k)), "at", lmPositions, lmCost,"from pos",successor.positions)
+					fmt.Println("LANDMARK voted", votes," down to ",newVotes, sequence.KmerString(int(nextK), int(d.k)), "at", lmPositions, lmCost,"from pos",successor.positions,". Cost:",lmCost)
 					t := &successor
 					for t != nil {
 						fmt.Print(sequence.KmerString(int(t.k), int(d.k))," ")
@@ -801,10 +839,10 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 							//other possiblity. We went through the landmark with insufficient votes. For speed we only check self and predecessor?
 							if n.k == nextK && n.minCost < mark.cost && mark.matches(n.positions) {
 								n.nextLandmark = len(d.landmarks)
-								mark.cropState(n, d.maxCost)
+								mark.cropState(n, seqs, d.maxCost)
 							} else if n.prev != nil && ((n.prev.k == nextK && n.prev.minCost < mark.cost && mark.matches(n.prev.positions)) || (n.prev.prev != nil && n.prev.prev.k == nextK && n.prev.prev.minCost < mark.cost && mark.matches(n.prev.prev.positions))){
 								n.nextLandmark = len(d.landmarks)
-								mark.cropState(n, d.maxCost)
+								mark.cropState(n, seqs, d.maxCost)
 							} else if n.nextLandmark > len(d.landmarks)-1 {
 								//otherwise, they have to achieve this landmark at some point
 								n.nextLandmark = len(d.landmarks) - 1
@@ -827,7 +865,7 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 							if match != nil && match.minCost <= mark.cost {
 								//so we've already acheived this one. Sorted.
 								current[j].nextLandmark = len(d.landmarks)
-								mark.cropState(current[j], d.maxCost)
+								mark.cropState(current[j], seqs, d.maxCost)
 							} else if mark.isPriorTo(current[j].positions) || mark.cost < current[j].minCost {
 								//otherise, its not working towards this one, or it'll never improve it, so remove it
 								current[j] = current[len(current)-1]
@@ -869,7 +907,7 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 						//this will occur if the last version had > minFinishedCost
 						allFinished = false
 						*next = append(*next, &successor)
-						if votes > len(successor.offsets)/4 {
+						if votes > 0.25 {
 							highCounts++
 						}
 						if successor.nextLandmark < minLandmark {
@@ -879,7 +917,7 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 				} else {
 					allFinished = false
 					*next = append(*next, &successor)
-					if votes > len(successor.offsets)/4 {
+					if votes > 0.25 {
 						highCounts++
 					}
 					if successor.nextLandmark < minLandmark {
@@ -901,7 +939,7 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 	if d.depth > initialOffset && len(*next) > 20 && highCounts > 5 {
 		for j := len(*next) - 1; j >= 0; j-- {
 			n := (*next)[j]
-			if n.nextLandmark == minLandmark && (n.votes < 2 || n.votes < len(n.offsets)/8) {
+			if n.nextLandmark == minLandmark && n.votes < 0.17 {
 				(*next)[j] = (*next)[len(*next)-1]
 				*next = (*next)[:len(*next)-1]
 			}
@@ -918,12 +956,13 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 }
 
 func (d *dtw) newState(k uint16) *state {
-	seqs, _ := d.measure.GetSequences()
-	s := state{k, make([]int32, len(seqs), len(seqs)), make([][]uint16, len(seqs), len(seqs)), nil, 0, 0, 0, false, 0}
+	seqs,_ := d.measure.GetSequences()
+	s := state{k, make([]int32, len(seqs)), make([][]uint16, len(seqs)), nil, 0, 0, 0, false, 0,make([]float64,len(seqs))}
 	//setup the offsets
 	for i, seq := range seqs {
 		s.positions[i] = int32(initialOffset)
 		s.offsets[i] = make([]uint16, d.maxWarp, d.maxWarp)
+		s.quality[i] = 1.0
 		if seq[0] != k {
 			s.offsets[i][initialOffset] = d.initialGapCost
 		} else {
@@ -1105,7 +1144,7 @@ func (d *dtw) GlobalAlignmentTo(reference []uint16) (<-chan uint16, <-chan *Qual
 	basesOut := make(chan uint16, 20)
 	costsOut := make(chan *QualityMetrics, 20)
 	posOut := make(chan []int, 20)
-	seqs, _ := d.measure.GetSequences()
+	seqs,_ := d.measure.GetSequences()
 	d.expectedPositions = make([]int32, len(seqs), len(seqs))
 
 	states := make([]*state, 1, 2)

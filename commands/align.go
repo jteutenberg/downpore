@@ -15,9 +15,9 @@ type alignCommand struct {
 
 func NewAlignCommand() Command {
 	args, alias, desc := MakeArgs(
-		[]string{"input", "rc_input", "model", "reference"},
-		[]string{"", "", "", ""},
-		[]string{"Fasta/fastq input file", "Additional input file containing sequences from reverse-complement reads", "Model file containing current levels", "(optional) A fasta file containing a reference sequence to align against"})
+		[]string{"input", "rc_input", "model", "k", "reference"},
+		[]string{"", "", "", "5",""},
+		[]string{"Fasta/fastq input file", "Additional input file containing sequences from reverse-complement reads", "Model file containing current levels", "K-mer size for alignment when no model specified", "(optional) A fasta file containing a reference sequence to align against"})
 	cons := alignCommand{args: args, alias: alias, desc: desc}
 	return &cons
 }
@@ -31,7 +31,7 @@ func (com *alignCommand) GetArgs() (map[string]string, map[string]string, map[st
 
 func (com *alignCommand) Run(args map[string]string) {
 	var m alignment.Measure
-	k := 5
+	k := ParseInt(args["k"])
 	initialGapCost := uint(5)
 	costThreshold := uint(200)
 	if len(args["model"]) > 0 {
@@ -41,7 +41,17 @@ func (com *alignCommand) Run(args map[string]string) {
 		costThreshold = uint(200) //get from model
 		initialGapCost = uint(2)
 	} else {
-		m = alignment.NewFivemerMeasure()
+		if k <= 3 {
+			k = 3
+			m = alignment.NewThreemerMeasure()
+		} else if k == 4 {
+			m = alignment.NewFourmerMeasure()
+		} else if k == 5 {
+			m = alignment.NewFivemerMeasure()
+		} else {
+			k = 6
+			m = alignment.NewSixmerMeasure()
+		}
 	}
 	//read each sequence, convert to short kmers
 	kmerSeqs := make([][]uint16, 0, 100)
@@ -85,9 +95,14 @@ func (com *alignCommand) Run(args map[string]string) {
 		kmers, costs, positions = dtw.GlobalAlignmentTo(ref)
 	}
 
-	finalCosts := make([]uint, len(kmerSeqs), len(kmerSeqs))
-	prevPos := make([]int, len(kmerSeqs), len(kmerSeqs))
-	lines := make([]string, len(kmerSeqs)+1, len(kmerSeqs)+1)
+	finalCosts := make([]uint, len(kmerSeqs))
+	prevPos := make([]int, len(kmerSeqs))
+	for i,_ := range prevPos {
+		prevPos[i] = -1
+	}
+	prevStay := make([]bool, len(kmerSeqs))
+	lines := make([]string, len(kmerSeqs)+1)
+	first := true
 	for kmer := range kmers {
 		ks := sequence.KmerString(int(kmer), k)
 		mid := ks[len(ks)/2 : len(ks)/2+1]
@@ -96,6 +111,13 @@ func (com *alignCommand) Run(args map[string]string) {
 		skips := 1
 		for i, p := range pos {
 			sk := p - prevPos[i]
+			if sk == 2 && prevStay[i] {
+				sk = 1
+				//replace the previous stay '.' with the skipped base
+				nextKmer := sequence.KmerString(int(kmerSeqs[i][p]), k)
+				prev := nextKmer[len(nextKmer)/2-1 : len(nextKmer)/2]
+				lines[i+1] = lines[i+1][:len(lines[i+1])-1] + prev
+			}
 			if sk > skips {
 				skips = sk
 			}
@@ -105,11 +127,19 @@ func (com *alignCommand) Run(args map[string]string) {
 		for i := 1; i < skips; i++ {
 			lines[0] += "." // a gap
 		}
-		lines[0] += mid
+		if first {
+			lines[0] = ks[:len(ks)/2+1]
+		} else {
+			lines[0] += mid
+		}
 		//consensus has been written, now add the sequences
 		for i, p := range pos {
 			//fmt.Println("seq",i,"position",p,"from",prevPos[i])
 			sk := p - prevPos[i] //the skip for this sequence
+			if sk == 2 && prevStay[i] {
+				sk = 1
+			}
+			prevStay[i] = sk == 0 && p > 0
 			if sk <= 0 {         //at worst a stay. Otherwise we're a bit mixed up
 				for j := 0; j < skips; j++ {
 					lines[i+1] += "."
@@ -120,7 +150,12 @@ func (com *alignCommand) Run(args map[string]string) {
 			nextKmer := sequence.KmerString(int(kmerSeqs[i][p]), k)
 			//write out skips, but save some to just write out as kmers (usually we write nothing here)
 			for ; sk > len(nextKmer)/2+1; sk-- {
-				oldMer := sequence.KmerString(int(kmerSeqs[i][p-sk]), k)[len(nextKmer)/2 : len(nextKmer)/2+1]
+				var oldMer string
+				if p-sk < 0 { //weird?
+					oldMer = sequence.KmerString(int(kmerSeqs[i][0]), k)[len(nextKmer)/2 : len(nextKmer)/2+1]
+				} else {
+					oldMer = sequence.KmerString(int(kmerSeqs[i][p-sk]), k)[len(nextKmer)/2 : len(nextKmer)/2+1]
+				}
 				lines[i+1] += oldMer
 				//lines[i+1] += "." //for large skips (only initial gap?)
 				bases--
@@ -132,9 +167,14 @@ func (com *alignCommand) Run(args map[string]string) {
 				lines[i+1] += "."
 			}
 			//put in the bases we left aside
-			lines[i+1] += mid
+			if first {
+				lines[i+1] = nextKmer[:len(nextKmer)/2+1]
+			} else {
+				lines[i+1] += mid
+			}
 		}
 		prevPos = pos
+		first = false
 	}
 	for _, line := range lines {
 		fmt.Println(line)

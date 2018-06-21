@@ -801,7 +801,7 @@ func hasOverhang(id uint, overlaps [][]*seeds.SeedMatch, leftIndex, rightIndex, 
 		leftOverhang = leftMatch.SeqB.GetSeedOffset(leftMatch.MatchB[0],k)
 		rightOverhang = rightMatch.SeqB.GetSeedOffsetFromEnd(rightMatch.MatchB[len(rightMatch.MatchB)-1],k)
 	}
-	fmt.Println("RC=",leftMatch.ReverseComplementQuery,"/",rightMatch.ReverseComplementQuery,"Seq ",id," LHS overhang of ",leftOverhang, "from contig",leftIndex,"/",len(overlaps)," RHS overhang of ",rightOverhang," from contig ",rightIndex,"/",len(overlaps)," sequence length is",overlaps[leftIndex][left].SeqB.GetLength())
+	fmt.Println("RC=",leftMatch.ReverseComplementQuery,"/",rightMatch.ReverseComplementQuery,"Seq ",id," LHS overhang of ",leftOverhang, "from contig",leftIndex,"/",len(overlaps)," RHS overhang of ",rightOverhang," from contig ",rightIndex,"/",len(overlaps)," sequence length is",overlaps[leftIndex][left].SeqB.GetLength(),"against limit of ",overlapSize*2)
 	return (rightIndex < len(overlaps)-2 && rightOverhang > overlapSize*2) || (leftIndex > 1 && leftOverhang > overlapSize*2)
 }
 

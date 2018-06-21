@@ -3,7 +3,6 @@ package mapping
 import (
 	"fmt"
 	"github.com/jteutenberg/downpore/seeds"
-	"github.com/jteutenberg/downpore/seeds/alignment"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
 	"sort"
@@ -21,7 +20,7 @@ type Mapping struct {
 }
 
 type Mapper interface {
-	Map(sequence.Sequence, alignment.Aligner) []*Mapping
+	Map(sequence.Sequence, seeds.Aligner) []*Mapping
 	MapWorker(<-chan sequence.Sequence, chan<- []*Mapping, chan<- bool)
 	AsString(*Mapping) string
 }
@@ -162,7 +161,7 @@ func (m *mapper) isConsistent(left, right *Mapping) bool {
 
 //maps the (potentially noisy) ends
 //if any map end-to-end then these are merged and all others discarded
-func (m *mapper) mapEnds(query sequence.Sequence, aligner alignment.Aligner) (openA, openB, matching []*Mapping) {
+func (m *mapper) mapEnds(query sequence.Sequence, aligner seeds.Aligner) (openA, openB, matching []*Mapping) {
 	openA = m.performMapping(query.SubSequence(0, m.edgeSize),aligner)
 	openB = m.performMapping(query.SubSequence(query.Len()-m.edgeSize, query.Len()),aligner)
 	openA = removeDominated(openA, openA, query.Len())
@@ -205,7 +204,7 @@ func (m *mapper) matchPairs(openA, openB []*Mapping) (remainingA, remainingB, ma
 
 //search for chimeric boundary given no end-to-end matches
 //this assumes any internal sequence matches either some on the left or some on the right, but not both.
-func (m *mapper) findSplitPoint(query sequence.Sequence, openA, openB []*Mapping, left, right int, aligner alignment.Aligner) {
+func (m *mapper) findSplitPoint(query sequence.Sequence, openA, openB []*Mapping, left, right int, aligner seeds.Aligner) {
 	for right-left >= m.edgeSize {
 		start := (right + left - m.edgeSize) / 2
 		end := start + m.edgeSize
@@ -288,7 +287,7 @@ func (m *mapper) findSplitPoint(query sequence.Sequence, openA, openB []*Mapping
 	}
 }
 
-func (m *mapper) GetRepeats(start, end int, aligner alignment.Aligner) (starts, ends []int) {
+func (m *mapper) GetRepeats(start, end int, aligner seeds.Aligner) (starts, ends []int) {
 	query := m.reference.SubSequence(start, end)
 	hits := m.performMapping(query,aligner)
 	hits = removeDominated(hits, hits, query.Len())
@@ -303,7 +302,7 @@ func (m *mapper) GetRepeats(start, end int, aligner alignment.Aligner) (starts, 
 
 //count A/B are how many of the open list are at an edge (starting at index 0)
 //Take further edgeSize steps in, testing for matching pairs and removing redundant hits
-func (m *mapper) mapNext(query sequence.Sequence, openA, openB []*Mapping, aligner alignment.Aligner) (newA, newB, matched []*Mapping) {
+func (m *mapper) mapNext(query sequence.Sequence, openA, openB []*Mapping, aligner seeds.Aligner) (newA, newB, matched []*Mapping) {
 	var extended []*Mapping
 
 	// Short sequences
@@ -428,7 +427,7 @@ func removeDominated(open, extended []*Mapping, queryLen int) []*Mapping {
 	return open[:last+1]
 }
 
-func (m *mapper) Map(query sequence.Sequence, aligner alignment.Aligner) []*Mapping {
+func (m *mapper) Map(query sequence.Sequence, aligner seeds.Aligner) []*Mapping {
 	var results []*Mapping
 	//For short, return the front of the matches (ignoring substantially worse ones)
 	if query.Len() <= m.edgeSize*2 {
@@ -487,7 +486,7 @@ func (m *mapper) Map(query sequence.Sequence, aligner alignment.Aligner) []*Mapp
 	return results
 }
 
-func (m *mapper) performMapping(query sequence.Sequence, aligner alignment.Aligner) []*Mapping {
+func (m *mapper) performMapping(query sequence.Sequence, aligner seeds.Aligner) []*Mapping {
 	k := int(m.index.GetSeedLength())
 	seedQuery := m.index.NewSeedSequence(query)
 	rcQuery := m.index.NewSeedSequence(query.ReverseComplement())
@@ -612,7 +611,7 @@ func (m *mapper) performMapping(query sequence.Sequence, aligner alignment.Align
 }
 
 func (m *mapper) MapWorker(queries <-chan sequence.Sequence, results chan<- []*Mapping, done chan<- bool) {
-	aligner := alignment.NewSeedAligner(m.edgeSize) //one seed for every base!
+	aligner := seeds.NewSeedAligner(m.edgeSize) //one seed for every base!
 	for query := range queries {
 		results <- m.Map(query,aligner)
 	}

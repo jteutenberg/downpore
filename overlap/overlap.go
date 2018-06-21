@@ -2,7 +2,6 @@ package overlap
 
 import (
 	"github.com/jteutenberg/downpore/seeds"
-	"github.com/jteutenberg/downpore/seeds/alignment"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
 	"fmt"
@@ -181,23 +180,37 @@ func (lap *overlapper) PrepareQueries(numSeeds int, seedLimit int, kmerValues []
 	}
 
 	//recalculate all queries using the full set of seeds
-	queries := make([]*SeedQuery, 0, len(cached))
 	seedSeq := make(chan *seeds.SeedSequence, lap.numWorkers*2)
 	inputSeq = make(chan sequence.Sequence, lap.numWorkers*2)
 	for i := 0; i < lap.numWorkers; i++ {
 		go seeds.AddSequenceWorker(inputSeq, lap.index, seedSeq, completed)
 	}
-	//linear here: grab the short queries using the full set of seeds
-	queryID := 0
-	k := int(lap.index.GetSeedLength())
+	queries := make([]*SeedQuery, 0, len(cached))
+	queriesDone := make(chan bool, 1)
+	go func() {
+		//and wrap them into query objects
+		queryID := 0
+		k := int(lap.index.GetSeedLength())
+		for s := range seedSeq {
+			q := SeedQuery{queryID, s.GetID(), s, true, false}
+			queries = append(queries, &q)
+			rc := SeedQuery{queryID, q.SequenceID, s.ReverseComplement(k,lap.index), true, true}
+			queryID++
+			queries = append(queries, &rc)
+		}
+		queriesDone <- true
+	}()
 	for i, s := range cached {
-		q := SeedQuery{queryID, s.GetID(), lap.index.NewSeedSequence(s), true, false}
-		queries = append(queries, &q)
-		rc := SeedQuery{queryID, q.SequenceID, q.Query.ReverseComplement(k,lap.index), true, true}
-		queryID++
-		queries = append(queries, &rc)
+		inputSeq <- s
 		cached[i] = nil
 	}
+	close(inputSeq)
+
+	for i := 0; i < lap.numWorkers; i++ {
+		<-completed
+	}
+	close(seedSeq)
+	<-queriesDone
 	return queries
 }
 
@@ -334,7 +347,7 @@ func (lap *overlapper) SetOverlapSize(size int) {
 func (lap *overlapper) matchWorker(input <-chan *SeedQuery, output chan<- *seeds.SeedMatch, done chan<- bool) {
 	k := int(lap.index.GetSeedLength())
 	seedSet := util.NewIntSet()
-	aligner := alignment.NewSeedAligner(lap.overlap/2)
+	aligner := seeds.NewSeedAligner(lap.overlap/2)
 	for q := range input {
 		seedSet.Clear()
 		for i := 0; i < q.Query.GetNumSeeds(); i++ {

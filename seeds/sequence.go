@@ -349,26 +349,6 @@ func (a *SeedSequence) MatchTo(b *SeedSequence, startA int, startB int, offset i
 	return &m
 }
 
-/*
-func (seq *SeedSequence) SingleMatch(query *SeedSequence, seqSet *util.IntSet, minMatch, k int) *SeedMatch {
-	//we'll do a single walk across the sequence, so only reduce the query (which should be the shorter of the two)
-	q, qIndex := query.Reduced(seqSet, k, minMatch, true)
-	if q == nil {
-		return nil
-	}
-	m := seq.topMatch(q, minMatch, k, false)
-	if m == nil {
-		return nil
-	}
-	if qIndex != nil {
-		for i, pos := range m.MatchA {
-			m.MatchA[i] = qIndex[pos]
-		}
-	}
-	m.SeqA = query
-	return m
-}*/
-
 func (seq *SeedSequence) Match(query *SeedSequence, querySet *util.IntSet, seqSet *util.IntSet, minMatch, k int) []*SeedMatch {
 	s := seq
 	q := query
@@ -480,58 +460,6 @@ func (seq *SeedSequence) dynamicMatch(query *SeedSequence, minMatch, k int, debu
 	}
 	return allGoodChains
 }
-
-/*//Similar to dynamicMatch but avoids memory allocation as much as possible, just returning the best match
-//This destroys the query sequence.
-func (seq *SeedSequence) topMatch(query *SeedSequence, minMatch, k int, debug bool) *SeedMatch {
-	if minMatch == 0 {
-		minMatch = 1
-	}
-	var bestChain []int
-	for qIndex := 1; qIndex < len(query.segments)-minMatch*2+2; qIndex += 2 {
-		qSeed := query.segments[qIndex]
-		if qSeed == -1 || (query.segments[qIndex-1] < 0 && qIndex > 1 && query.segments[qIndex+1] < 0 && qSeed == query.segments[qIndex-2] && qSeed == query.segments[qIndex+2]) {
-			continue //internal to closely spaced repeats. Potential massive repeat region has poor information in this representation
-		}
-		//1. Consider each matching start position with no existing chain
-		querySeedIndex := qIndex / 2
-		prevSeed := -1 //to help check for repeats: never start chains on internal repeats, corresponding to the check above
-		for i := 1; i < len(seq.segments)-minMatch*2+2; i += 2 {
-			nextSeed := seq.segments[i]
-			if nextSeed == qSeed && nextSeed != prevSeed { //matching seeds
-				//  2. Start a new chain with this match
-				if debug {
-					log.Println("Starting new chain at query", qIndex/2, "sequence", i/2)
-				}
-				chainsA[querySeedIndex] = make([]int, 1, (len(query.segments)-qIndex)/2)
-				chainsB[querySeedIndex] = make([]int, 1, (len(query.segments)-qIndex)/2)
-				chainsA[querySeedIndex][0] = querySeedIndex
-				chainsB[querySeedIndex][0] = i / 2
-				//  3. Extend the chain forward, setting the chain value at each index as matches are made
-				chainA, chainB := extendChain(query, seq, chainsA, chainsB, qIndex, i, k, debug)
-				if debug {
-					log.Println("Got chain:", chainA, chainB)
-				}
-				//  4. At the end, if the chain is longest so far, and remaining unchained seeds are fewer, return it
-				if len(chainA) >= minMatch {
-					if allGoodChains == nil {
-						allGoodChains = make([]*SeedMatch, 0, 5)
-					}
-					nextLength := (len(chainA) * 2) / 3
-					if nextLength > minMatch {
-						minMatch = nextLength
-						//remove any chains shorter than this
-						for j := len(allGoodChains) - 1; j >= 0; j-- {
-							if len(allGoodChains[j].MatchA) < nextLength {
-								allGoodChains[j] = allGoodChains[len(allGoodChains)-1]
-								allGoodChains[len(allGoodChains)-1] = nil
-								allGoodChains = allGoodChains[:len(allGoodChains)-1]
-							}
-						}
-						//TODO: use base coverage rather than chain length
-					}
-
-}*/
 
 //Extend a chain forward, setting entries of chainsA and chainsB as we go.
 //Any shorter chains encountered are overwritten (this should be an exceptional case)
@@ -992,6 +920,16 @@ func (s *seqSorter) Swap(i, j int) {
 	}
 }
 
+
+//A multiple sequence consensus, given an anchor point where all sequences match a backbone.
+func ConsensusNew(seqs []*SeedSequence, anchors, anchorOffsets []int, k int) []*SeedMatch {
+	//1. Consensus forward from the anchor
+
+	//2. Reverse the sequences and consensus back from the anchor
+
+	return nil
+}
+
 func Consensus(seqs []*SeedSequence, badness []int, anchors, anchorOffsets []int, k int) []*SeedMatch {
 	//1. sort by quality (seeds matching original query)
 	sorter := &seqSorter{seqs: seqs, others: [][]int{anchors, anchorOffsets}, value: badness}
@@ -1336,6 +1274,16 @@ func (s *SeedSequence) GetSeed(index int) int {
 	return s.segments[index*2+1]
 }
 
+func (s *SeedSequence) GetMaxSeed() int {
+	maxSeed := 0
+	for i := 1; i < len(s.segments); i+=2 {
+		if s.segments[i] > maxSeed {
+			maxSeed = s.segments[i]
+		}
+	}
+	return maxSeed
+}
+
 func (s *SeedSequence) GetSegments() []int {
 	return s.segments //a shame to expose this. Any alternatives?
 }
@@ -1365,6 +1313,7 @@ func (m *SeedMatch) GetAIndices(k int) (start int, end int) {
 	return start, end
 }
 
+//GetBIndices gets the start and end positions in the original sequence of the first and last matching seeds
 func (m *SeedMatch) GetBIndices(k int) (start int, end int) {
 	start = m.SeqB.segments[0] + m.SeqB.offset
 	startB := m.MatchB[0]

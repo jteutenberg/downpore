@@ -415,12 +415,15 @@ func (f *fastaSequenceSet) fastqWriter(seqs <-chan Sequence, out *bufio.Writer, 
 		var str string
 		quality := s.Quality()
 		for i, b := range quality {
-			quality[i] = b + 33 //TODO: temporary change
+			quality[i] = b + 33 
 		}
 		if fullNames {
 			str = fmt.Sprintf("@%s\n%s\n+\n%s\n", f.GetName(s.GetID()), s.String(), string(quality))
 		} else {
 			str = fmt.Sprintf("@%v\n%s\n+\n%s\n", s.GetID(), s.String(), string(quality))
+		}
+		for i, b := range quality {
+			quality[i] = b - 33 
 		}
 		lock.Lock()
 		out.WriteString(str)

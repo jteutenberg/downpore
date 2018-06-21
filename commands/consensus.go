@@ -15,9 +15,9 @@ type consensusCommand struct {
 
 func NewConsensusCommand() Command {
 	args, alias, desc := MakeArgs(
-		[]string{"input", "rc_input", "model"},
-		[]string{"", "", ""},
-		[]string{"Fasta/fastq input file", "Additional input file containing sequences from reverse-complement reads", "Model file containing current levels"})
+		[]string{"input", "rc_input", "model","k"},
+		[]string{"", "", "","5"},
+		[]string{"Fasta/fastq input file", "Additional input file containing sequences from reverse-complement reads", "Model file containing current levels","K-mer size for alignment when no model specified"})
 	cons := consensusCommand{args: args, alias: alias, desc: desc}
 	return &cons
 }
@@ -31,7 +31,7 @@ func (com *consensusCommand) GetArgs() (map[string]string, map[string]string, ma
 
 func (com *consensusCommand) Run(args map[string]string) {
 	var m alignment.Measure
-	k := 5
+	k := ParseInt(args["k"])
 	maxWarp := 16
 	initialGapCost := uint(5)
 	costThreshold := uint(200)
@@ -42,7 +42,17 @@ func (com *consensusCommand) Run(args map[string]string) {
 		costThreshold = uint(200) //get from model
 		initialGapCost = uint(2)
 	} else {
-		m = alignment.NewFivemerMeasure()
+		if k <= 3 {
+			k = 3
+			m = alignment.NewThreemerMeasure()
+		} else if k == 4 {
+			m = alignment.NewFourmerMeasure()
+		} else if k == 5 {
+			m = alignment.NewFivemerMeasure()
+		} else {
+			k = 6
+			m = alignment.NewSixmerMeasure()
+		}
 	}
 
 	//read each sequence, convert to short kmers
@@ -56,30 +66,27 @@ func (com *consensusCommand) Run(args map[string]string) {
 	seqSet = sequence.NewFastaSequenceSet(args["rc_input"], 0, 1, false, false)
 	seqs = seqSet.GetSequences()
 	for seq := range seqs {
-		/*qs := seq.Quality()
-		if qs == nil {
-			fmt.Println("no quality.")
-		} else {
-			fmt.Println(len(qs), "quality for", seq.Len())
-		}*/
 		kmerSeqs = append(kmerSeqs, seq.ShortKmers(k,false))
 	}
 	dtw := alignment.NewDTWAligner(maxWarp, initialGapCost, m, false, costThreshold, k)
 	//consensus 'em
-	rc := make([]bool, len(kmerSeqs), len(kmerSeqs))
+	rc := make([]bool, len(kmerSeqs))
 	for ; nonRC < len(rc); nonRC++ {
 		rc[nonRC] = true
 	}
 	m.SetSequences(kmerSeqs, rc)
 	kmers, costs, finalResult := dtw.GlobalConsensus()
 	first := true
-	costsString := ".." //three quality metrics
-	votesString := ".."
-	spaceString := ".."
+	var costsString string //three quality metrics
+	for i := k; i > 0; i-- {
+		costsString += "."
+	}
+	votesString := costsString
+	spaceString := costsString
+
 	consensus := make([]uint16, 0, 1000)
 	for kmer := range kmers {
-		<-costs
-		/*cost := <-costs
+		cost := <-costs
 		dc := cost.CostDelta
 		if dc > 0 {
 			dc = 1 + dc/30
@@ -97,7 +104,7 @@ func (com *consensusCommand) Run(args map[string]string) {
 		}
 		costsString = fmt.Sprint(costsString, dc)
 		votesString = fmt.Sprint(votesString, int(cost.ExactFraction*9.99))
-		spaceString = fmt.Sprint(spaceString, sp)*/
+		spaceString = fmt.Sprint(spaceString, sp)
 		consensus = append(consensus, kmer)
 		if first {
 			fmt.Print(sequence.KmerString(int(kmer), k))

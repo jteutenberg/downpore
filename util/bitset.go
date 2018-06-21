@@ -227,14 +227,17 @@ func (set *IntSet) RemoveAll(other *IntSet) {
 func (set *IntSet) Union(other *IntSet) {
 	start := other.start
 	end := other.end
-	if start < set.start {
+	empty := set.start > set.end
+	if start < set.start || empty {
 		set.start = start
 	}
-	if end > set.end {
+	if end > set.end || empty {
+		if end >= uint(len(set.vs)) {
+			newVs := make([]uint64, end+1)
+			copy(newVs, set.vs)
+			set.vs = newVs
+		}
 		set.end = end
-		newVs := make([]uint64, set.end+1)
-		copy(newVs, set.vs)
-		set.vs = newVs
 	}
 	for i := start; i <= end; i++ {
 		set.vs[i] |= other.vs[i]

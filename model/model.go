@@ -13,7 +13,7 @@ import (
 
 type Model interface {
 	GetK() uint
-	SetSequences(seqs [][]uint16, rc []bool)
+	SetSequences([][]uint16, []bool)
 	GetSequences() ([][]uint16, []bool)
 	GetSequenceLen(int) int
 	//Distance is the relative to the expected current difference between two kmers
