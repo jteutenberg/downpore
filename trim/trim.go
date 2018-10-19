@@ -129,7 +129,7 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	if t.verbosity > 0 {
 		log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
 	}
-	splits := make([]*sequenceSplit, t.index.GetNumSequences(), t.index.GetNumSequences())
+	splits := make([]*sequenceSplit, seqs.Size()+1)
 	ids := make([]int, 0, 100)
 	var maxID int
 	for i, ad := range t.frontAdapters {
