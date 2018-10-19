@@ -164,6 +164,10 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 						//prepare the split. Compensate for the trim that will be applied.
 						id := target.GetID()
 						futureTrim := seqs.GetFrontTrim(id)
+						if id < 0 || id >= len(splits) {
+							log.Println("Warning: unexpected sequence for splitting, id: ",id,"/",len(splits))
+							continue
+						}
 						if splits[id] != nil {
 							if splits[id].aEnd > start-t.extraMidTrim-futureTrim {
 								splits[id].aEnd = start - t.extraMidTrim - futureTrim
