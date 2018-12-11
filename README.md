@@ -104,9 +104,10 @@ Adapters with names beginning "Barcode" are a special case. These take precedenc
 * `verbosity` a level of logging output (written to stderr)
 * `num_workers` number of threads to use to build the search index for internal adapters
 * `himem` whether or not to cache input reads in memory
+* `demultiplex` a path to demultiplex barcodes into, otherwise write everything to stdout
 
 ## De-multiplexing
-The trim command does not explicitly de-multiplex data. If this is required then the sequence names of the output (which include barcode labels added by downpore) can be used by an external script to partition them.
+When the demultiplex path is provided sequences will be written to one fasta/fastq file per barcode. A barcode is any adapter that begins with "Barcode" and should not contain any underscores in its name. The `tag_adapters` switch should be left true, though in this case the demultiplexed sequences will not have a prefix added to their names.
 
 ## Porechop performance comparison
 The main use case for the downpore trim command is for those situations in which Porechop is the bottleneck in your pipeline, or possibly when there are memory constraints. In terms of performance, downpore is I/O bound as it makes two passes through the input file, whereas Porechop is CPU bound. As such, all comparisons below are based on wall-clock time.
