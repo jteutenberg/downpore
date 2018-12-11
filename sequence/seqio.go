@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -38,6 +39,7 @@ type SequenceSet interface {
 	Size() int
 	AddSequence(Sequence, string) //additional sequences to be kept in memory, these appear after the fasta on read
 	Write(io.Writer, bool)
+	Demultiplex(string)
 }
 
 type fastaSequenceSet struct {
@@ -415,7 +417,7 @@ func (f *fastaSequenceSet) fastqWriter(seqs <-chan Sequence, out *bufio.Writer, 
 		var str string
 		quality := s.Quality()
 		for i, b := range quality {
-			quality[i] = b + 33 
+			quality[i] = b + 33
 		}
 		if fullNames {
 			str = fmt.Sprintf("@%s\n%s\n+\n%s\n", f.GetName(s.GetID()), s.String(), string(quality))
@@ -423,7 +425,7 @@ func (f *fastaSequenceSet) fastqWriter(seqs <-chan Sequence, out *bufio.Writer, 
 			str = fmt.Sprintf("@%v\n%s\n+\n%s\n", s.GetID(), s.String(), string(quality))
 		}
 		for i, b := range quality {
-			quality[i] = b - 33 
+			quality[i] = b - 33
 		}
 		lock.Lock()
 		out.WriteString(str)
@@ -453,4 +455,69 @@ func (f *fastaSequenceSet) Write(out io.Writer, fullNames bool) {
 		<-done
 	}
 	bout.Flush()
+}
+
+func (f *fastaSequenceSet) Demultiplex(outPath string) {
+	partitions := make(map[string]chan Sequence)
+	outputs := make([]*bufio.Writer, 0, 100)
+	files := make([]*os.File, 0, 100)
+
+	ext := ".fasta"
+	if f.isFastq {
+		ext = ".fastq"
+	}
+	numWorkers := 0
+	done := make(chan bool, 100) //it will block after this. Shouldn't really matter
+
+	seqs := f.GetSequences()
+	for s := range seqs {
+		n := f.GetName(s.GetID())
+		if !strings.HasPrefix(n,"Barcode") {
+			continue
+		}
+		pos := strings.Index(n,"_")
+		if pos != -1 {
+			label := n[:pos]
+			partition, exists := partitions[label]
+			if !exists {
+				nextPath := filepath.Join(outPath,label+ext)
+				if fout, ferr := os.OpenFile(nextPath, os.O_CREATE|os.O_WRONLY, 0755 ); ferr != nil {
+					log.Fatal("Unable to open file for writing:",nextPath, ferr)
+
+				} else {
+					bout := bufio.NewWriter(fout)
+					outputs = append(outputs, bout)
+					files = append(files,fout)
+					partition = make(chan Sequence, 20)
+					partitions[label] = partition
+					var lock sync.Mutex
+					if f.isFastq {
+						go f.fastqWriter(partition,bout,true,&lock, done)
+					} else {
+						go f.fastaWriter(partition,bout,true,&lock, done)
+					}
+					numWorkers++
+				}
+			}
+			//now remove the label and send on the sequence
+			f.SetName(s.GetID(),n[pos+1:])
+			partition <- s
+		}
+	}
+	//close the partitions
+	for _, p := range partitions {
+		close(p)
+	}
+
+	//wait for everything to complete
+	for ; numWorkers > 0; numWorkers-- {
+		<-done
+	}
+	//flush and close all outputs
+	for _, bout := range outputs {
+		bout.Flush()
+	}
+	for _, fout := range files {
+		fout.Close()
+	}
 }

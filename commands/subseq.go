@@ -66,6 +66,11 @@ func (com *subseqCommand) Run(args map[string]string) {
 			seq = <-seqs
 		}
 		if seq != nil {
+			if name != seq.GetName() {
+				log.Println("Invalid name found:",seq.GetName()," != ",name)
+				fmt.Println(">n\n")
+				continue
+			}
 			fmt.Printf(">%s_%d\n", seq.GetName(), start)
 			if start > end { //circular wrapping
 				sub1 := seq.SubSequence(start, seq.Len())
@@ -76,6 +81,10 @@ func (com *subseqCommand) Run(args map[string]string) {
 					fmt.Println(sub1.String() + sub2.String())
 				}
 			} else {
+				if end > seq.Len() {
+					log.Println("Bad request:",start,"-",end," in sequence length ",seq.Len(),seq.GetName())
+					end = seq.Len()
+				}
 				subseq := seq.SubSequence(start, end)
 				if rc {
 					fmt.Println(subseq.ReverseComplement())

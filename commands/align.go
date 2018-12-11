@@ -5,6 +5,7 @@ import (
 	"github.com/jteutenberg/downpore/model"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/sequence/alignment"
+	"os"
 )
 
 type alignCommand struct {
@@ -49,8 +50,9 @@ func (com *alignCommand) Run(args map[string]string) {
 		} else if k == 5 {
 			m = alignment.NewFivemerMeasure()
 		} else {
-			k = 6
-			m = alignment.NewSixmerMeasure()
+			//k = 6
+			k = 5
+			m = alignment.NewEditDistance(k,3,4,1)
 		}
 	}
 	//read each sequence, convert to short kmers
@@ -109,7 +111,14 @@ func (com *alignCommand) Run(args map[string]string) {
 		cs := <-costs
 		pos := <-positions
 		skips := 1
+		os.Stderr.WriteString("\n"+ks+" ")
 		for i, p := range pos {
+			if prevPos[i] == p {
+				os.Stderr.WriteString(sequence.KmerString(int(kmerSeqs[i][p]),k)+" ")
+			}
+			for x := prevPos[i]+1; x <= p; x++ {
+				os.Stderr.WriteString(sequence.KmerString(int(kmerSeqs[i][x]),k)+" ")
+			}
 			sk := p - prevPos[i]
 			if sk == 2 && prevStay[i] {
 				sk = 1

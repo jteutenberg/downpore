@@ -2,108 +2,11 @@ package alignment
 
 import (
 	"fmt"
-	//"github.com/jteutenberg/downpore/sequence"
+	"github.com/jteutenberg/downpore/sequence"
 	"testing"
 	//"math/rand"
 )
 
-/*
-type simpleMeasure struct {}
-
-func (m *simpleMeasure) Distance(a, b uint16) uint16 {
-	if a == b {
-		return 0
-	}
-	return 3
-}
-func (m *simpleMeasure) Distances(a uint16, sequence, start int, ds []uint16) {
-	end := start+len(ds)
-		ds[i] = m.Distance(a,b)
-	}
-}
-
-type fivemerMeasure struct{}
-func (m *fivemerMeasure) Distance(a, b uint16) uint16 {
-	if a == b {
-		return 0
-	}
-	if ((a ^ b) & 252) == 0 {
-		return 2
-	}
-	return 3
-}
-func (m *fivemerMeasure) DistanceRC(a, b uint16) uint16 {
-	return 0
-}
-func (m *fivemerMeasure) Distance2D(a, b uint16) uint16 {
-	return 0
-}
-func (m *fivemerMeasure) DistancesRC(a uint16, bs []uint16, ds []uint16) {
-	return
-}
-func (m *fivemerMeasure) Distances(a uint16, bs, ds []uint16) {
-	for i,b := range bs {
-		ds[i] = m.Distance(a,b)
-	}
-}
-
-func makeDTW(numSeq int, k int) Aligner {
-	var m Measure
-	if k == 5 {
-		m = &(fivemerMeasure{})
-	} else {
-		m = &(simpleMeasure{})
-	}
-	return NewDTWAligner(10,2, m, 15, k)
-}
-
-func errorise(seq string, k, add, remove, perm int, random *rand.Rand) []uint16 {
-	bases := []string{"A","C","G","T"}
-	ns := ""
-	for i, s := range seq {
-		r := random.Intn(100)
-		if i < 2 {
-			r = 100
-		}
-		if r < add+perm {
-			ns = ns+bases[random.Intn(4)]
-		} else if r >= add+perm+remove {
-			ns = ns+string(s)
-		}
-	}
-	return sequence.NewByteSequence(0,ns).ShortKmers(k)
-}
-
-func checkOutput(dtw Aligner, ss [][]uint16, k int, ans []uint16, t *testing.T) {
-	rcs := make([]bool, len(ss), len(ss))
-	kmers,costs, _ := dtw.GlobalConsensus(ss,rcs)
-	cs := ""
-	i := 0
-	bad := false
-	for kmer := range kmers {
-		cost := <-costs
-		fmt.Print(sequence.KmerString(int(kmer), k),",")
-		cs = fmt.Sprint(cs,",",cost)
-		if i < len(ans) && kmer != ans[i] {
-			t.Error("Mismatch at index",i,"answer",sequence.KmerString(int(ans[i]),k),"!=",sequence.KmerString(int(kmer),k))
-			bad = true
-		}
-		i++
-	}
-	if i < len(ans)-2 { //allow 2 at the end in case of modified sequences
-		t.Error("Incomplete call:",i,"kmers instead of",len(ans))
-	}
-	if bad {
-		t.Error("\nCorrect sequence:\n",sequence.NewByteSequenceFromKmers(-1,ans,k).String())
-		t.Error("\nInput:")
-		for _,s := range ss {
-			t.Error("\n",sequence.NewByteSequenceFromKmers(-1,s,k).String())
-		}
-	}
-	fmt.Println()
-	fmt.Println(cs)
-}
-*/
 func Test0Asm(test *testing.T) {
 	//before := []uint16{65535,0,65535,65535,65535,65535,65535,65535,65535,0,65535,65535,65535,2,2,5,0,1,65535,65535,65535,65535,65535,65535,65535,65535,65535,65535,65535,0,65535,65535}
 	//before := []uint16{32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,0,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767,32767}
@@ -138,6 +41,58 @@ func Test0Asm(test *testing.T) {
 	}
 	fmt.Println("cost :",cost)
 }
+
+func Test1EditDistance(test *testing.T) {
+	m := NewEditDistance(5)
+	truth := []string{"AACAA","CCCAA","CCAAA","CACAC","CAAAA","AAAAC","ACCCA","ACCAA","AACCA"}
+	truthmer := [][]uint16{make([]uint16,len(truth))}
+	for i, t := range truth {
+		truthmer[0][i] = uint16(sequence.KmerValue(t))
+	}
+	m.SetSequences(truthmer,nil)
+	inserters := []string{"","T","TT","TTT"}
+
+	ds := make([]uint16,1)
+	for j, t := range truth {
+		//2x6 inserts (shifting left and right)
+		for insert_size := 1; insert_size < 3; insert_size++ {
+			for i := 0; i <= len(t); i++ {
+				var insert string
+				if i <= len(t)-insert_size {
+					insert = t[:i]+ inserters[insert_size] + t[i:len(t)-insert_size] //LHS unchanged
+					m.Distances(uint16(sequence.KmerValue(insert)), 0, j, ds)
+					if (insert_size == 1 && ds[0] != 1) || (insert_size > 1 && ds[0] <= 1) {
+						test.Error("Edit distance ",ds[0]," for ",t," vs ",insert)
+					}
+				}
+				if i > insert_size {
+					insert = t[insert_size:i] + inserters[insert_size] + t[i:] //LHS shifted
+					m.Distances(uint16(sequence.KmerValue(insert)), 0, j, ds)
+					if (insert_size == 1 && ds[0] != 1) || (insert_size > 1 && ds[0] <= 1) {
+						test.Error("Edit distance ",ds[0]," for ",t," vs ",insert)
+					}
+				}
+			}
+		}
+		//2x5 deletes (adding a T at each end)
+		for insert_size := 1; insert_size < 3; insert_size++ {
+			for i := 0; i <= len(t)-insert_size; i++ {
+				deleted := inserters[insert_size] + t[:i] + t[i+insert_size:]
+				m.Distances(uint16(sequence.KmerValue(deleted)), 0, j, ds)
+				if (insert_size == 1 && ds[0] != 1) || (insert_size > 1 && ds[0] <= 1) {
+					test.Error("Edit distance ",ds[0]," for ",t," vs ",deleted)
+				}
+				deleted = t[:i] + t[i+insert_size:]+inserters[insert_size]
+				m.Distances(uint16(sequence.KmerValue(deleted)), 0, j, ds)
+				if (insert_size == 1 && ds[0] != 1) || (insert_size > 1 && ds[0] <= 1) {
+					test.Error("Edit distance ",ds[0]," for ",t," vs ",deleted)
+				}
+			}
+		}
+		//5 mismatches
+	}
+}
+
 /*
 func Test1SingleSeq(test *testing.T) {
 	dtw := makeDTW(1,3)

@@ -5,6 +5,7 @@ import (
 	"github.com/jteutenberg/downpore/model"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/sequence/alignment"
+	"github.com/jteutenberg/downpore/util/sequtil"
 )
 
 type consensusCommand struct {
@@ -15,9 +16,9 @@ type consensusCommand struct {
 
 func NewConsensusCommand() Command {
 	args, alias, desc := MakeArgs(
-		[]string{"input", "rc_input", "model","k"},
-		[]string{"", "", "","5"},
-		[]string{"Fasta/fastq input file", "Additional input file containing sequences from reverse-complement reads", "Model file containing current levels","K-mer size for alignment when no model specified"})
+		[]string{"input", "rc_input", "model","matrix","k"},
+		[]string{"", "", "","","5"},
+		[]string{"Fasta/fastq input file", "Additional input file containing sequences from reverse-complement reads", "Model file containing current levels","K-mer confusion matrix to use in place of a model","K-mer size for alignment when no model specified"})
 	cons := consensusCommand{args: args, alias: alias, desc: desc}
 	return &cons
 }
@@ -41,8 +42,14 @@ func (com *consensusCommand) Run(args map[string]string) {
 		m = mod
 		costThreshold = uint(200) //get from model
 		initialGapCost = uint(2)
+	} else if len(args["matrix"]) > 0 {
+		matrix, mk := sequtil.LoadConfusionMatrix(args["matrix"])
+		k = mk
+		m = alignment.NewMatrixDistance(k,matrix)
 	} else {
-		if k <= 3 {
+		if k == 1 {
+			m = alignment.NewBaseMeasure()
+		} else if k <= 3 {
 			k = 3
 			m = alignment.NewThreemerMeasure()
 		} else if k == 4 {
@@ -50,8 +57,10 @@ func (com *consensusCommand) Run(args map[string]string) {
 		} else if k == 5 {
 			m = alignment.NewFivemerMeasure()
 		} else {
-			k = 6
-			m = alignment.NewSixmerMeasure()
+			//k = 6
+			//m = alignment.NewSixmerMeasure()
+			k = 5
+			m = alignment.NewEditDistance(k,3,4,1)
 		}
 	}
 
@@ -69,6 +78,7 @@ func (com *consensusCommand) Run(args map[string]string) {
 		kmerSeqs = append(kmerSeqs, seq.ShortKmers(k,false))
 	}
 	dtw := alignment.NewDTWAligner(maxWarp, initialGapCost, m, false, costThreshold, k)
+	//dtw := alignment.NewDTWAligner(maxWarp, initialGapCost, m, true, costThreshold, k)
 	//consensus 'em
 	rc := make([]bool, len(kmerSeqs))
 	for ; nonRC < len(rc); nonRC++ {

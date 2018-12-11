@@ -129,14 +129,13 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	if t.verbosity > 0 {
 		log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
 	}
-	splits := make([]*sequenceSplit, t.index.GetNumSequences(), t.index.GetNumSequences())
+	splits := make([]*sequenceSplit, seqs.Size()+1)
 	ids := make([]int, 0, 100)
 	var maxID int
 	for i, ad := range t.frontAdapters {
 		minMatch := ad.GetNumSeeds() / 5
 		ms := t.index.Matches(ad, 0.2)
 		//fire off workers to handle the matches
-		count := 0
 		for _, index := range ms {
 			target := t.index.GetSeedSequence(uint(index))
 			targetSet := t.index.GetSeedSet(uint(index))
@@ -164,6 +163,10 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 						//prepare the split. Compensate for the trim that will be applied.
 						id := target.GetID()
 						futureTrim := seqs.GetFrontTrim(id)
+						if id < 0 || id >= len(splits) {
+							log.Println("Warning: unexpected sequence for splitting, id: ",id,"/",len(splits))
+							continue
+						}
 						if splits[id] != nil {
 							if splits[id].aEnd > start-t.extraMidTrim-futureTrim {
 								splits[id].aEnd = start - t.extraMidTrim - futureTrim
@@ -182,7 +185,6 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 							}
 						}
 					}
-					count++
 				}
 			}
 		}
