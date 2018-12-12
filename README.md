@@ -69,7 +69,7 @@ Usage examples:
 
 ```downpore trim -i reads.fastq -f ./data/adapters_front.fasta -b ./data/adapters_back.fasta --himem true --num_workers 32 > trimmed.fastq```
 
-```downpore trim -i reads.fastq -f ./data/adapters_front.fasta -b ./data/adapters_back.fasta --num_workers 32 --demultiplex ./barcode_output```
+```downpore trim -i reads.fastq -f ./data/adapters_front.fasta -b ./data/adapters_back.fasta --num_workers 32 --demultiplex ./barcode_output --require_pairs true```
 
 ## Trim overview
 The trim command uses k-mer matching and chaining to find sub-sequences of reads that match any adapter/barcode from a list provided by the user.  Adapters found in the middle of long reads cause that read to be split.
@@ -91,25 +91,39 @@ By default, the adapter/barcode with the most bases present in a read has its na
 Adapters with names beginning "Barcode" are a special case. These take precedence and will always be used in the output label if found, though the trimming will still be based on all adapters present. If there exist two barcodes that are within 5% identity in a read (i.e. ambiguous barcodes) then no adapter labels will be written. Take care: this has not been thoroughly tested.
 
 ## Trim arguments
+Input
 * `input` the input reads file
 * `front_adapters` fasta containing adapters found at the beginning of reads
 * `back_adapters` fasta containing adapters found at the end of reads
+
+Adapter sub-sets to use
+* `determine_adapters` whether to use all adapters provided or to determine which are present
+* `check_reads` number of reads to consider when determining adapters present in the data
+* `adapter_threshold` the identity to match an adapter when performing check_reads
+
+Matching parameters
 * `k` the size of k-mers to use in matching
 * `chunk_size` the size to split long input reads into when indexing
 * `middle_threshold` percentage identity to match an internal adapter
 * `discard_middle` whether or not to keep the splits resulting from an internal match
-* `check_reads` number of reads to consider when determining adapters present in the data
-* `adapter_threshold` the identity to match an adapter when performing check_reads
+Trim output parameters
 * `extra_end_trim` number of bases to trim around adapters at the front and back
 * `extra_middle_trim` number of bases to trim around internal adapters
 * `tag_adapters` whether or not to modify output labels
+
+Additional barcode parameters
+* `demultiplex` a path to demultiplex barcodes into, otherwise write everything to stdout
+* `require_pairs` whether to ignore reads without a matching pair of barcodes at both ends
+
+Other arguments
 * `verbosity` a level of logging output (written to stderr)
 * `num_workers` number of threads to use to build the search index for internal adapters
 * `himem` whether or not to cache input reads in memory
-* `demultiplex` a path to demultiplex barcodes into, otherwise write everything to stdout
 
 ## De-multiplexing
 When the demultiplex path is provided sequences will be written to one fasta/fastq file per barcode. A barcode is any adapter that begins with "Barcode" and should not contain any underscores in its name. The `tag_adapters` switch should be left true, though in this case the demultiplexed sequences will not have a prefix added to their names.
+
+When a large number of barcodes is in use the set of k-mers covered by the full set will become large. This can greatly increase memory usage. Should this become an issue the simplest solution is to increase k (say, to k=7 from the default of 6) so that their presence in the reads is less dense.
 
 ## Porechop performance comparison
 The main use case for the downpore trim command is for those situations in which Porechop is the bottleneck in your pipeline, or possibly when there are memory constraints. In terms of performance, downpore is I/O bound as it makes two passes through the input file, whereas Porechop is CPU bound. As such, all comparisons below are based on wall-clock time.
