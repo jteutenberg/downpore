@@ -214,7 +214,7 @@ func (f *fastaSequenceSet) readFasta(in ReadSeekCloser, nextID int, maxSeqs int)
 						f.frontTrim = append(f.frontTrim, 0)
 						f.backTrim = append(f.backTrim, 0)
 						f.lengths = append(f.lengths, len(buf)-1)
-						f.names = append(f.names, strings.Fields(lastName)[0])
+						f.names = append(f.names, strings.TrimSpace(lastName)) //strings.Fields(lastName)[0])
 						f.size++
 						seq := NewPackedSequence(nextID, string(buf[:len(buf)-1]), &(f.names[len(f.names)-1]))
 						f.bases += int64(len(buf) - 1)

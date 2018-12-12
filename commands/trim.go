@@ -15,9 +15,9 @@ type trimCommand struct {
 
 func NewTrimCommand() Command {
 	args, alias, desc := MakeArgs(
-		[]string{"input", "k", "chunk_size", "middle_threshold", "discard_middle", "check_reads", "adapter_threshold", "extra_end_trim", "extra_middle_trim", "tag_adapters", "verbosity", "front_adapters", "back_adapters", "num_workers", "himem","demultiplex"},
-		[]string{"", "6", "5000", "85", "false", "10000", "90", "5", "100", "true", "1", "", "", "4", "false",""},
-		[]string{"Fasta/fastq/gzip input file", "k-mer size to use when matching adapters", "Split long reads into chunks of this size when indexing", "% identity for matching adapters that split reads", "Whether to keep halves of split reads", "Number of reads to use to determine which adapters are present", "% identity required at check_adapters stage", "Number of bases to remove around adapters at read edges", "Number of bases to remove around read-splitting adapters", "Whether to add adapter names to output sequence names", "Level (0-2) of output to stderr", "Fasta/fastq file containing front adapters", "Fasta/fastq file containing back adapters", "Number of threads to use", "Whether to cache all reads in memory","A path to demultiplex to, otherwise write sequences to stdout"})
+		[]string{"input", "k", "chunk_size", "middle_threshold", "discard_middle", "check_reads", "adapter_threshold", "extra_end_trim", "extra_middle_trim", "tag_adapters", "verbosity", "front_adapters", "back_adapters", "num_workers", "himem","demultiplex","require_pairs","determine_adapters"},
+		[]string{"", "6", "5000", "85", "false", "10000", "90", "5", "100", "true", "1", "", "", "4", "false","","false","true"},
+		[]string{"Fasta/fastq/gzip input file", "k-mer size to use when matching adapters", "Split long reads into chunks of this size when indexing", "% identity for matching adapters that split reads", "Whether to keep halves of split reads", "Number of reads to use to determine which adapters are present", "% identity required at check_adapters stage", "Number of bases to remove around adapters at read edges", "Number of bases to remove around read-splitting adapters", "Whether to add adapter names to output sequence names", "Level (0-2) of output to stderr", "Fasta/fastq file containing front adapters", "Fasta/fastq file containing back adapters", "Number of threads to use", "Whether to cache all reads in memory","A path to demultiplex to, otherwise write sequences to stdout","Whether front/back adapters with the same name must appear together","Whether to use a fixed set of adapters or to search for those present"})
 	trim := trimCommand{args: args, alias: alias, desc: desc}
 	return &trim
 }
@@ -34,8 +34,10 @@ func (com *trimCommand) Run(args map[string]string) {
 	trimmer := trim.LoadTrimmer(args["front_adapters"], args["back_adapters"], ParseInt(args["k"]))
 	seqSet := sequence.NewFastaSequenceSet(args["input"], 50, numWorkers, ParseBool(args["himem"]), false)
 	trimmer.SetVerbosity(ParseInt(args["verbosity"]))
-	trimmer.DetermineAdapters(seqSet, ParseInt(args["check_reads"]), ParseInt(args["adapter_threshold"]), numWorkers)
-	trimmer.SetTrimParams(ParseInt(args["middle_threshold"]), ParseInt(args["extra_end_trim"]), ParseInt(args["extra_middle_trim"]), ParseInt(args["chunk_size"]), !ParseBool(args["discard_middle"]), ParseBool(args["tag_adapters"]))
+	if ParseBool(args["determine_adapters"]) {
+		trimmer.DetermineAdapters(seqSet, ParseInt(args["check_reads"]), ParseInt(args["adapter_threshold"]), numWorkers)
+	}
+	trimmer.SetTrimParams(ParseInt(args["middle_threshold"]), ParseInt(args["extra_end_trim"]), ParseInt(args["extra_middle_trim"]), ParseInt(args["chunk_size"]), !ParseBool(args["discard_middle"]), ParseBool(args["tag_adapters"]), ParseBool(args["require_pairs"]))
 	trimmer.Trim(seqSet, numWorkers)
 	trimmer.PrintStats(seqSet)
 	//and write

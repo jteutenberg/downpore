@@ -5,6 +5,7 @@ import (
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
 	"log"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -17,6 +18,8 @@ type Trimmer struct {
 	backAdapters     []*seeds.SeedSequence
 	frontAdapterSets []*util.IntSet
 	backAdapterSets  []*util.IntSet
+	pairsFront	 []int
+	pairsBack	 []int
 	index            *seeds.SeedIndex
 	k                int
 	chunkSize        int
@@ -32,6 +35,7 @@ type Trimmer struct {
 	extraMidTrim  int
 	keepSplits    bool
 	tagAdapters   bool
+	requirePairs  bool
 	verbosity     int
 }
 
@@ -46,7 +50,7 @@ func NewTrimmer(frontAdapters, backAdapters []sequence.Sequence, k int) *Trimmer
 	var lock sync.Mutex
 	t := Trimmer{originalFront: frontAdapters, originalBack: backAdapters, frontAdapters: make([]*seeds.SeedSequence, 0, len(frontAdapters)), backAdapters: make([]*seeds.SeedSequence, 0, len(backAdapters)), frontAdapterSets: make([]*util.IntSet, 0, len(frontAdapters)), backAdapterSets: make([]*util.IntSet, 0, len(backAdapters)), index: nil, k: k, frontCounts: nil, backCounts: nil, noCount: 0, lock: &lock, verbosity: 1}
 	(&t).setupIndex()
-	t.SetTrimParams(85, 5, 50, 1000, false, true)
+	t.SetTrimParams(85, 5, 50, 1000, false, true,false)
 	return &t
 }
 
@@ -67,8 +71,27 @@ func (t *Trimmer) setupIndex() {
 		t.index.GetSeedsFromKmers(kmers, set)
 		t.backAdapterSets = append(t.backAdapterSets, set)
 	}
-	t.frontCounts = make([]int, len(t.originalFront), len(t.originalFront))
-	t.backCounts = make([]int, len(t.originalBack), len(t.originalBack))
+	t.frontCounts = make([]int,len(t.originalFront))
+	t.backCounts = make([]int, len(t.originalBack))
+	//also prepare the pairs based on adapter names
+	pairID := 1
+	t.pairsFront = make([]int, len(t.originalFront))
+	t.pairsBack = make([]int, len(t.originalBack))
+	for i,_ := range t.originalBack {
+		t.pairsBack[i] = -1
+	}
+	for i,a := range t.originalFront {
+		name := a.GetName()
+		t.pairsFront[i] = -1
+		for j,b := range t.originalBack {
+			if b.GetName() == name {
+				t.pairsFront[i] = pairID
+				t.pairsBack[j] = pairID
+				pairID++
+				break
+			}
+		}
+	}
 }
 
 //LoadTrimmer creates a new trimmer loading adapters from fasta/fastq files
@@ -94,12 +117,13 @@ func (t *Trimmer) SetVerbosity(level int) {
 }
 
 //SetTrimParams updates the parameters to be used by any following calls to Trim.
-func (t *Trimmer) SetTrimParams(midThreshold, extraEdgeTrim, extraMidTrim int, chunkSize int, keepSplits bool, tagAdapters bool) {
+func (t *Trimmer) SetTrimParams(midThreshold, extraEdgeTrim, extraMidTrim int, chunkSize int, keepSplits, tagAdapters, requirePairs bool) {
 	t.midThreshold = midThreshold
 	t.extraEdgeTrim = extraEdgeTrim
 	t.extraMidTrim = extraMidTrim
 	t.keepSplits = keepSplits
 	t.tagAdapters = tagAdapters
+	t.requirePairs = requirePairs
 	t.chunkSize = chunkSize
 }
 
@@ -122,72 +146,20 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	}
 	t.index.IndexSequences(numWorkers)
 
-	edgeSize := 150
-	minSeqLength := 500 //splits need to be longer than this
 
 	//now query for internal matches
 	if t.verbosity > 0 {
 		log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
 	}
+
 	splits := make([]*sequenceSplit, seqs.Size()+1)
 	ids := make([]int, 0, 100)
 	var maxID int
 	for i, ad := range t.frontAdapters {
-		minMatch := ad.GetNumSeeds() / 5
-		ms := t.index.Matches(ad, 0.2)
-		//fire off workers to handle the matches
-		for _, index := range ms {
-			target := t.index.GetSeedSequence(uint(index))
-			targetSet := t.index.GetSeedSet(uint(index))
-			matches := target.Match(ad, t.frontAdapterSets[i], targetSet, minMatch, t.k)
-			if matches != nil {
-				for _, match := range matches {
-					identity, _ := match.GetBasesCovered(t.k)
-					if (identity*100)/ad.Len() < t.midThreshold {
-						continue
-					}
-					start := target.GetOffset() + target.GetSeedOffset(match.MatchB[0], t.k) - ad.GetSeedOffset(match.MatchA[0], t.k)
-					seqLen := target.GetOffset() + target.Len() + target.GetInset()
-					if start < minSeqLength { //just crop the front off
-						if start+ad.Len()+edgeSize < seqLen {
-							seqs.SetFrontTrim(target.GetID(), start+ad.Len()+t.extraMidTrim)
-							if t.tagAdapters {
-								seqs.SetName(target.GetID(), ad.GetName()+"_"+seqs.GetName(target.GetID()))
-							}
-						} else {
-							seqs.SetIgnore(target.GetID(), true)
-						}
-					} else if start+minSeqLength+ad.Len() > seqLen { //crop off the tail
-						seqs.SetBackTrim(target.GetID(), seqLen-start+t.extraMidTrim)
-					} else {
-						//prepare the split. Compensate for the trim that will be applied.
-						id := target.GetID()
-						futureTrim := seqs.GetFrontTrim(id)
-						if id < 0 || id >= len(splits) {
-							log.Println("Warning: unexpected sequence for splitting, id: ",id,"/",len(splits))
-							continue
-						}
-						if splits[id] != nil {
-							if splits[id].aEnd > start-t.extraMidTrim-futureTrim {
-								splits[id].aEnd = start - t.extraMidTrim - futureTrim
-							}
-							if splits[id].bStart < start+ad.Len()+t.extraMidTrim-futureTrim {
-								splits[id].bStart = start + ad.Len() + t.extraMidTrim - futureTrim
-							}
-						} else {
-							if t.verbosity > 2 {
-								log.Println(match.LongString(t.index))
-							}
-							splits[id] = &sequenceSplit{id: id, aEnd: start - t.extraMidTrim - futureTrim, bStart: start + ad.Len() + t.extraMidTrim - futureTrim}
-							ids = append(ids, id)
-							if id > maxID {
-								maxID = id
-							}
-						}
-					}
-				}
-			}
-		}
+		go t.findSplit(ad,t.frontAdapterSets[i],splits,&ids,&maxID,seqs,done)
+	}
+	for i := 0; i < len(t.frontAdapters); i++ {
+		<-done
 	}
 	if t.verbosity > 0 {
 		log.Println(len(ids), "sequences require splitting")
@@ -372,6 +344,9 @@ func (t *Trimmer) findMatches(kmerSet *util.IntSet, seq sequence.Sequence, adapt
 						}
 						found = true
 						t.lock.Lock()
+						if i > len(counts) {
+							log.Println("Over count! ",i," adapter out of ",len(counts))
+						}
 						counts[i]++
 						t.lock.Unlock()
 					}
@@ -407,6 +382,7 @@ func (t *Trimmer) checkAdapterWorker(set sequence.SequenceSet, frontEnabled, bac
 	done <- true
 }
 
+
 func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequence, done chan<- bool) {
 	kmerSet := util.NewIntSet()
 	edgeSize := 150       //bases to search for early and late adapters
@@ -426,7 +402,24 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 		kmerSet.Clear()
 		kmers = backSeq.ShortKmers(t.k, true) //more sensitive
 		t.index.GetSeedsFromKmers(kmers, kmerSet)
-		end, _, foundEnd, _ := t.findMatches(kmerSet, backSeq, t.backAdapters, t.backAdapterSets, t.backCounts)
+		end, _, foundEnd, backMatchIndex := t.findMatches(kmerSet, backSeq, t.backAdapters, t.backAdapterSets, t.backCounts)
+
+		//if pairs are required, test whether these exist
+		if t.requirePairs {
+			f := -1
+			b := -1
+			if foundStart {
+				f = t.pairsFront[matchIndex]
+			}
+			if foundEnd {
+				b = t.pairsBack[backMatchIndex]
+			}
+			if f != b { //one of them wants to pair, but the other doesn't match
+				//disable the adapter match, but still trim. Same as an ambiguous adapter match.
+				foundStart = false
+				foundEnd = false
+			}
+		}
 
 		t.lock.Lock()
 		t.seenCount++
@@ -444,8 +437,11 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 				if t.tagAdapters {
 					set.SetName(seq.GetID(), t.frontAdapters[matchIndex].GetName()+"_"+set.GetName(seq.GetID()))
 				}
+			} else if end > start && start > 0 {
+				//trim off ambiguous adapters too
+				set.SetFrontTrim(seq.GetID(), start)
 			}
-			if foundEnd {
+			if foundEnd || (end > start && end < seq.Len()) {
 				set.SetBackTrim(seq.GetID(), end)
 			}
 			//put the remaining centre of the sequence into the index for later querying
@@ -470,4 +466,67 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 		}
 	}
 	done <- true
+}
+
+func (t *Trimmer) findSplit(ad *seeds.SeedSequence, adSet *util.IntSet, splits []*sequenceSplit, ids *[]int, maxID *int, seqs sequence.SequenceSet, done chan<- bool) {
+	edgeSize := 150
+	minSeqLength := 500 //splits need to be longer than this
+
+	minMatch := ad.GetNumSeeds() / 5
+	ms := t.index.Matches(ad, 0.2)
+	for _, index := range ms {
+		target := t.index.GetSeedSequence(uint(index))
+		targetSet := t.index.GetSeedSet(uint(index))
+		matches := target.Match(ad, adSet, targetSet, minMatch, t.k)
+		if matches != nil {
+			for _, match := range matches {
+				identity, _ := match.GetBasesCovered(t.k)
+				if (identity*100)/ad.Len() < t.midThreshold {
+					continue
+				}
+				t.lock.Lock()
+				start := target.GetOffset() + target.GetSeedOffset(match.MatchB[0], t.k) - ad.GetSeedOffset(match.MatchA[0], t.k)
+				seqLen := target.GetOffset() + target.Len() + target.GetInset()
+				if start < minSeqLength { //just crop the front off
+					if start+ad.Len()+edgeSize < seqLen {
+						seqs.SetFrontTrim(target.GetID(), start+ad.Len()+t.extraMidTrim)
+						if t.tagAdapters {
+							seqs.SetName(target.GetID(), ad.GetName()+"_"+seqs.GetName(target.GetID()))
+						}
+					} else {
+						seqs.SetIgnore(target.GetID(), true)
+					}
+				} else if start+minSeqLength+ad.Len() > seqLen { //crop off the tail
+					seqs.SetBackTrim(target.GetID(), seqLen-start+t.extraMidTrim)
+				} else {
+					//prepare the split. Compensate for the trim that will be applied.
+					id := target.GetID()
+					futureTrim := seqs.GetFrontTrim(id)
+					if id < 0 || id >= len(splits) {
+						log.Println("Warning: unexpected sequence for splitting, id: ",id,"/",len(splits))
+						continue
+					}
+					if splits[id] != nil {
+						if splits[id].aEnd > start-t.extraMidTrim-futureTrim {
+							splits[id].aEnd = start - t.extraMidTrim - futureTrim
+						}
+						if splits[id].bStart < start+ad.Len()+t.extraMidTrim-futureTrim {
+							splits[id].bStart = start + ad.Len() + t.extraMidTrim - futureTrim
+						}
+					} else {
+						if t.verbosity > 2 {
+							log.Println(match.LongString(t.index))
+						}
+						splits[id] = &sequenceSplit{id: id, aEnd: start - t.extraMidTrim - futureTrim, bStart: start + ad.Len() + t.extraMidTrim - futureTrim}
+						*ids = append(*ids, id)
+						if id > *maxID {
+							*maxID = id
+						}
+					}
+				}
+				t.lock.Unlock()
+			}
+		}
+	}
+	done <-true
 }
