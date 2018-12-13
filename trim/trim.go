@@ -153,12 +153,14 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	edgeSize := 150       //bases to search for early and late adapters
 	minSeeds := 4         //minimum number of seeds required to make an splitting match with an adapter
 	totalCount := 0
+	totalBases := 0
 
 	splits := make([]*sequenceSplit, seqs.Size()+1)
 	ids := make([]int, 0, 100)
 	var maxID int
 	for seq := range ss {
 		//put the remaining centre of the sequence into the index for later querying
+		totalBases += seq.Len()-edgeSize*2
 		for i := edgeSize; i < seq.Len()-edgeSize-longestAdapter; i += t.chunkSize - longestAdapter { //100 is minimum non-edge sequence size, and max expected adapter size
 			if i > seq.Len()-(t.chunkSize*3)/2-edgeSize {
 				//add the entire remainder
@@ -184,7 +186,7 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 			t.index.IndexSequences(numWorkers)
 			//now query for internal matches
 			if t.verbosity > 0 {
-				log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
+				log.Println("Searching", int(totalBases/1000000),"MB of sequences for splitting based on", len(t.frontAdapters), "adapters")
 			}
 
 			for i, ad := range t.frontAdapters {
@@ -194,6 +196,7 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 				<-done
 			}
 			totalCount = 0
+			totalBases = 0
 			//clear the sequences
 			t.setupIndex()
 		}
@@ -202,7 +205,7 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	if totalCount > 0 {
 		t.index.IndexSequences(numWorkers)
 		if t.verbosity > 0 {
-			log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
+			log.Println("Searching", int(totalBases/1000000),"MB of sequences for splitting based on", len(t.frontAdapters), "adapters")
 		}
 		for i, ad := range t.frontAdapters {
 			go t.findSplit(ad, t.frontAdapterSets[i], splits, &ids, &maxID, seqs, done)
