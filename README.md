@@ -123,7 +123,7 @@ Other arguments
 ## De-multiplexing
 When the demultiplex path is provided sequences will be written to one fasta/fastq file per barcode. A barcode is any adapter that begins with "Barcode" and should not contain any underscores in its name. The `tag_adapters` switch should be left true, though in this case the demultiplexed sequences will not have a prefix added to their names.
 
-When a large number of barcodes is in use the set of k-mers covered by the full set will become large. This can greatly increase memory usage. Should this become an issue the simplest solution is to increase k (say, to k=7 from the default of 6) so that their presence in the reads is less dense.
+When a large number of barcodes is in use, most k-mers will appear in some adapter and the search process for finding chimeric reads will be inefficient. In tests with 100 adapters that cover most k-mers the search can take up to 1 minute per GB of sequence using 16 threads. Should this become an issue the simplest solution is to increase k (say, to k=7 from the default of 6) so that their presence in the reads is less dense.
 
 ## Porechop performance comparison
 The main use case for the downpore trim command is for those situations in which Porechop is the bottleneck in your pipeline, or possibly when there are memory constraints. In terms of performance, downpore is I/O bound as it makes two passes through the input file, whereas Porechop is CPU bound. As such, all comparisons below are based on wall-clock time.
