@@ -5,7 +5,6 @@ import (
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
 	"log"
-	"runtime"
 	"strings"
 	"sync"
 )
@@ -18,8 +17,8 @@ type Trimmer struct {
 	backAdapters     []*seeds.SeedSequence
 	frontAdapterSets []*util.IntSet
 	backAdapterSets  []*util.IntSet
-	pairsFront	 []int
-	pairsBack	 []int
+	pairsFront       []int
+	pairsBack        []int
 	index            *seeds.SeedIndex
 	k                int
 	chunkSize        int
@@ -50,11 +49,15 @@ func NewTrimmer(frontAdapters, backAdapters []sequence.Sequence, k int) *Trimmer
 	var lock sync.Mutex
 	t := Trimmer{originalFront: frontAdapters, originalBack: backAdapters, frontAdapters: make([]*seeds.SeedSequence, 0, len(frontAdapters)), backAdapters: make([]*seeds.SeedSequence, 0, len(backAdapters)), frontAdapterSets: make([]*util.IntSet, 0, len(frontAdapters)), backAdapterSets: make([]*util.IntSet, 0, len(backAdapters)), index: nil, k: k, frontCounts: nil, backCounts: nil, noCount: 0, lock: &lock, verbosity: 1}
 	(&t).setupIndex()
-	t.SetTrimParams(85, 5, 50, 1000, false, true,false)
+	t.SetTrimParams(85, 5, 50, 1000, false, true, false)
 	return &t
 }
 
 func (t *Trimmer) setupIndex() {
+	t.frontAdapters = t.frontAdapters[:0]
+	t.frontAdapterSets = t.frontAdapterSets[:0]
+	t.backAdapters = t.backAdapters[:0]
+	t.backAdapterSets = t.backAdapterSets[:0]
 	t.index = seeds.NewSeedIndex(uint(t.k))
 	//extract all seeds and set up the index
 	for _, s := range t.originalFront {
@@ -71,19 +74,19 @@ func (t *Trimmer) setupIndex() {
 		t.index.GetSeedsFromKmers(kmers, set)
 		t.backAdapterSets = append(t.backAdapterSets, set)
 	}
-	t.frontCounts = make([]int,len(t.originalFront))
+	t.frontCounts = make([]int, len(t.originalFront))
 	t.backCounts = make([]int, len(t.originalBack))
 	//also prepare the pairs based on adapter names
 	pairID := 1
 	t.pairsFront = make([]int, len(t.originalFront))
 	t.pairsBack = make([]int, len(t.originalBack))
-	for i,_ := range t.originalBack {
+	for i, _ := range t.originalBack {
 		t.pairsBack[i] = -1
 	}
-	for i,a := range t.originalFront {
+	for i, a := range t.originalFront {
 		name := a.GetName()
 		t.pairsFront[i] = -1
-		for j,b := range t.originalBack {
+		for j, b := range t.originalBack {
 			if b.GetName() == name {
 				t.pairsFront[i] = pairID
 				t.pairsBack[j] = pairID
@@ -144,22 +147,69 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	for i := 0; i < numWorkers; i++ {
 		<-done
 	}
-	t.index.IndexSequences(numWorkers)
-
-
-	//now query for internal matches
-	if t.verbosity > 0 {
-		log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
-	}
+	//add some sequences to the index
+	ss = seqs.GetSequences()
+	longestAdapter := 100 //bases in longest adapter, with a bit of padding
+	edgeSize := 150       //bases to search for early and late adapters
+	minSeeds := 4         //minimum number of seeds required to make an splitting match with an adapter
+	totalCount := 0
 
 	splits := make([]*sequenceSplit, seqs.Size()+1)
 	ids := make([]int, 0, 100)
 	var maxID int
-	for i, ad := range t.frontAdapters {
-		go t.findSplit(ad,t.frontAdapterSets[i],splits,&ids,&maxID,seqs,done)
+	for seq := range ss {
+		//put the remaining centre of the sequence into the index for later querying
+		for i := edgeSize; i < seq.Len()-edgeSize-longestAdapter; i += t.chunkSize - longestAdapter { //100 is minimum non-edge sequence size, and max expected adapter size
+			if i > seq.Len()-(t.chunkSize*3)/2-edgeSize {
+				//add the entire remainder
+				seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, seq.Len()-edgeSize))
+				totalCount += seedSeq.GetNumSeeds()
+				t.index.AddSequence(seedSeq)
+				break
+			} else {
+				//just a chunk
+				endPoint := i + t.chunkSize
+				if endPoint >= seq.Len()-edgeSize {
+					endPoint = seq.Len() - edgeSize
+				}
+				seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, endPoint))
+				totalCount += seedSeq.GetNumSeeds()
+				if seedSeq.GetNumSeeds() >= minSeeds {
+					t.index.AddSequence(seedSeq)
+				}
+			}
+		}
+		//refresh the index every few hundred thousand sequences? Or just count #seeds
+		if totalCount > 300000000 { //300M
+			t.index.IndexSequences(numWorkers)
+			//now query for internal matches
+			if t.verbosity > 0 {
+				log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
+			}
+
+			for i, ad := range t.frontAdapters {
+				go t.findSplit(ad, t.frontAdapterSets[i], splits, &ids, &maxID, seqs, done)
+			}
+			for i := 0; i < len(t.frontAdapters); i++ {
+				<-done
+			}
+			totalCount = 0
+			//clear the sequences
+			t.setupIndex()
+		}
 	}
-	for i := 0; i < len(t.frontAdapters); i++ {
-		<-done
+	//and do the final splits too
+	if totalCount > 0 {
+		t.index.IndexSequences(numWorkers)
+		if t.verbosity > 0 {
+			log.Println("Searching", t.index.GetNumSequences(), "sub-sequences for splitting based on", len(t.frontAdapters), "adapters")
+		}
+		for i, ad := range t.frontAdapters {
+			go t.findSplit(ad, t.frontAdapterSets[i], splits, &ids, &maxID, seqs, done)
+		}
+		for i := 0; i < len(t.frontAdapters); i++ {
+			<-done
+		}
 	}
 	if t.verbosity > 0 {
 		log.Println(len(ids), "sequences require splitting")
@@ -250,10 +300,6 @@ func (t *Trimmer) DetermineAdapters(seqs sequence.SequenceSet, numReads int, thr
 			t.originalBack = t.originalBack[:len(t.originalBack)-1]
 		}
 	}
-	t.frontAdapters = t.frontAdapters[:0]
-	t.frontAdapterSets = t.frontAdapterSets[:0]
-	t.backAdapters = t.backAdapters[:0]
-	t.backAdapterSets = t.backAdapterSets[:0]
 	t.setupIndex()
 }
 
@@ -345,7 +391,7 @@ func (t *Trimmer) findMatches(kmerSet *util.IntSet, seq sequence.Sequence, adapt
 						found = true
 						t.lock.Lock()
 						if i > len(counts) {
-							log.Println("Over count! ",i," adapter out of ",len(counts))
+							log.Println("Over count! ", i, " adapter out of ", len(counts))
 						}
 						counts[i]++
 						t.lock.Unlock()
@@ -382,12 +428,9 @@ func (t *Trimmer) checkAdapterWorker(set sequence.SequenceSet, frontEnabled, bac
 	done <- true
 }
 
-
 func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequence, done chan<- bool) {
 	kmerSet := util.NewIntSet()
-	edgeSize := 150       //bases to search for early and late adapters
-	longestAdapter := 100 //bases in longest adapter, with a bit of padding
-	minSeeds := 4         //minimum number of seeds required to make an splitting match with an adapter
+	edgeSize := 150 //bases to search for early and late adapters
 	for seq := range seqs {
 		if seq.Len() < edgeSize+50 {
 			continue
@@ -444,25 +487,6 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 			if foundEnd || (end > start && end < seq.Len()) {
 				set.SetBackTrim(seq.GetID(), end)
 			}
-			//put the remaining centre of the sequence into the index for later querying
-			for i := edgeSize; i < seq.Len()-edgeSize-longestAdapter; i += t.chunkSize - longestAdapter { //100 is minimum non-edge sequence size, and max expected adapter size
-				if i > seq.Len()-(t.chunkSize*3)/2-edgeSize {
-					//add the entire remainder
-					seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, seq.Len()-edgeSize))
-					t.index.AddSequence(seedSeq)
-					break
-				} else {
-					//just a chunk
-					endPoint := i + t.chunkSize
-					if endPoint >= seq.Len()-edgeSize {
-						endPoint = seq.Len() - edgeSize
-					}
-					seedSeq := t.index.NewSeedSequence(seq.SubSequence(i, endPoint))
-					if seedSeq.GetNumSeeds() >= minSeeds {
-						t.index.AddSequence(seedSeq)
-					}
-				}
-			}
 		}
 	}
 	done <- true
@@ -503,7 +527,7 @@ func (t *Trimmer) findSplit(ad *seeds.SeedSequence, adSet *util.IntSet, splits [
 					id := target.GetID()
 					futureTrim := seqs.GetFrontTrim(id)
 					if id < 0 || id >= len(splits) {
-						log.Println("Warning: unexpected sequence for splitting, id: ",id,"/",len(splits))
+						log.Println("Warning: unexpected sequence for splitting, id: ", id, "/", len(splits))
 						continue
 					}
 					if splits[id] != nil {
@@ -528,5 +552,5 @@ func (t *Trimmer) findSplit(ad *seeds.SeedSequence, adSet *util.IntSet, splits [
 			}
 		}
 	}
-	done <-true
+	done <- true
 }
