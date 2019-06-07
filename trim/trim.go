@@ -433,7 +433,7 @@ func (t *Trimmer) checkAdapterWorker(set sequence.SequenceSet, frontEnabled, bac
 
 func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequence, done chan<- bool) {
 	kmerSet := util.NewIntSet()
-	edgeSize := 150 //bases to search for early and late adapters
+	edgeSize := 150 //bases to search for early and late adapters. TODO: pass in as an argument, ensure consistency with the internal splitting
 	for seq := range seqs {
 		if seq.Len() < edgeSize+50 {
 			continue
@@ -512,11 +512,23 @@ func (t *Trimmer) findSplit(ad *seeds.SeedSequence, adSet *util.IntSet, splits [
 					continue
 				}
 				t.lock.Lock()
+
+				id := target.GetID()
+				if id < 0 || id >= len(splits) {
+					log.Println("Warning: unexpected sequence for splitting, id: ", id, "/", len(splits))
+					continue
+				}
+				frontTrim := seqs.GetFrontTrim(id)
+				backTrim := seqs.GetBackTrim(id)
+
 				start := target.GetOffset() + target.GetSeedOffset(match.MatchB[0], t.k) - ad.GetSeedOffset(match.MatchA[0], t.k)
-				seqLen := target.GetOffset() + target.Len() + target.GetInset()
-				if start < minSeqLength { //just crop the front off
-					if start+ad.Len()+edgeSize < seqLen {
-						seqs.SetFrontTrim(target.GetID(), start+ad.Len()+t.extraMidTrim)
+				seqLen := target.GetOffset() + target.Len() + target.GetInset() - backTrim
+				if start < minSeqLength+frontTrim { //just crop the front off
+					newTrim := start+ad.Len()+t.extraMidTrim
+					if newTrim+edgeSize < seqLen {
+						if newTrim > frontTrim {
+							seqs.SetFrontTrim(target.GetID(), start+ad.Len()+t.extraMidTrim)
+						}
 						if t.tagAdapters {
 							seqs.SetName(target.GetID(), ad.GetName()+"_"+seqs.GetName(target.GetID()))
 						}
@@ -524,27 +536,25 @@ func (t *Trimmer) findSplit(ad *seeds.SeedSequence, adSet *util.IntSet, splits [
 						seqs.SetIgnore(target.GetID(), true)
 					}
 				} else if start+minSeqLength+ad.Len() > seqLen { //crop off the tail
-					seqs.SetBackTrim(target.GetID(), seqLen-start+t.extraMidTrim)
+					newTrim := seqLen-start+t.extraMidTrim
+					if newTrim > backTrim {
+						seqs.SetBackTrim(target.GetID(), newTrim)
+					}
 				} else {
 					//prepare the split. Compensate for the trim that will be applied.
-					id := target.GetID()
-					futureTrim := seqs.GetFrontTrim(id)
-					if id < 0 || id >= len(splits) {
-						log.Println("Warning: unexpected sequence for splitting, id: ", id, "/", len(splits))
-						continue
-					}
+					//this is because we are working with the seed sequences that are still in a pre-trim state, but will apply the split to the trimmed sequence
 					if splits[id] != nil {
-						if splits[id].aEnd > start-t.extraMidTrim-futureTrim {
-							splits[id].aEnd = start - t.extraMidTrim - futureTrim
+						if splits[id].aEnd > start-t.extraMidTrim-frontTrim {
+							splits[id].aEnd = start - t.extraMidTrim - frontTrim
 						}
-						if splits[id].bStart < start+ad.Len()+t.extraMidTrim-futureTrim {
-							splits[id].bStart = start + ad.Len() + t.extraMidTrim - futureTrim
+						if splits[id].bStart < start+ad.Len()+t.extraMidTrim-frontTrim {
+							splits[id].bStart = start + ad.Len() + t.extraMidTrim - frontTrim
 						}
 					} else {
 						if t.verbosity > 2 {
 							log.Println(match.LongString(t.index))
 						}
-						splits[id] = &sequenceSplit{id: id, aEnd: start - t.extraMidTrim - futureTrim, bStart: start + ad.Len() + t.extraMidTrim - futureTrim}
+						splits[id] = &sequenceSplit{id: id, aEnd: start - t.extraMidTrim - frontTrim, bStart: start + ad.Len() + t.extraMidTrim - frontTrim}
 						*ids = append(*ids, id)
 						if id > *maxID {
 							*maxID = id

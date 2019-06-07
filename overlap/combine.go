@@ -66,8 +66,6 @@ func trimToBestSeed(upto int, ms []*seeds.SeedMatch, minMatch int, k int) (conse
 	consensus, _ = ms[0].SeqA.Trimmed(0, bestIndex, 0, backIndex, k)
 	//2. Find the closest matches and trim as we go
 	for j, match := range ms {
-		fmt.Println(j,match,"lengths:",len(match.MatchA),"for seq",match.SeqB.GetNumSeeds())
-		fmt.Println("Finding equivalent to ",bestIndex,"/",match.SeqA.GetNumSeeds(),"in consensus.")
 		index, bases, frontDistance := match.GetBaseIndex(bestIndex, k)     //this is an index + bases after. We trim by index + bases before...
 		bIndex, backBases, backDistance := match.GetBaseIndex(backIndex, k) //This one is fine for trimming
 		//if the final matching seed is before the back trim (or after the front trim)... ignore this sequence?
@@ -113,21 +111,11 @@ func trimToBestSeed(upto int, ms []*seeds.SeedMatch, minMatch int, k int) (conse
 }
 
 func NewSeedContig(ms []*seeds.SeedMatch, k int) *SeedContig {
-	fmt.Println("Pre-trim gaps:")
-	for _, m := range ms {
-		s := m.SeqB.GetSegments()
-		fmt.Println(s[0],s[len(s)-1])
-	}
 	minMatch := 5
 	if len(ms) < 5 {
 		minMatch = len(ms)
 	}
 	consensus, parts, trimFailed := trimToBestSeed(ms[0].SeqA.GetNumSeeds()/4, ms, minMatch, k)
-	fmt.Println("Post-trim gaps:")
-	for _, p := range parts {
-		s := p.GetSegments()
-		fmt.Println(s[0],s[len(s)-1])
-	}
 
 	contig := SeedContig{consensus, make([]int, len(ms), len(ms)), make([]bool, len(ms), len(ms)), make([]int, len(ms), len(ms)), make([]int, len(ms), len(ms)), trimFailed, make([]int, len(ms), len(ms)), ms}
 	for i, part := range parts {
@@ -174,9 +162,6 @@ func (contig *SeedContig) Remove(part int) {
 
 func BuildConsensus(sg *seeds.SeedIndex, overlaps []*seeds.SeedMatch) *SeedContig {
 	k := int(sg.GetSeedLength())
-	//anchors := make([]int, 0, len(overlaps)+1) //start seed indices
-	//anchorOffsets := make([]int, 0, len(overlaps)+1)
-	//mismatches := make([]int, 0, len(overlaps)+1)
 	seqs := make([]*seeds.SeedSequence, 0, len(overlaps)+1)
 
 	for _, lap := range overlaps {
@@ -186,16 +171,8 @@ func BuildConsensus(sg *seeds.SeedIndex, overlaps []*seeds.SeedMatch) *SeedConti
 			//But SeqB is a new SeedSequence with reversed edge offsets, etc. <-- it no longer relates to the read
 		}
 	}
-	//generate anchor points by estimating the location of the middle seed
-	//fullSeeds := overlaps[0].SeqA.GetNumSeeds()
-	//mid := fullSeeds / 2
 	for _, lap := range overlaps {
 		s := lap.SeqB
-		/*
-		anchor, offset, _ := lap.GetBaseIndex(mid, k)
-		if anchor >= s.GetNumSeeds() || len(lap.MatchA) < 3 { //1-2 seeds.. just not enough
-			continue
-		}*/
 		ca, cb := lap.GetBasesCovered(k)
 		if ca < 25 || cb < 25 { //~30 bases minimum too. Can occur when seeds overlap
 			continue
@@ -203,22 +180,11 @@ func BuildConsensus(sg *seeds.SeedIndex, overlaps []*seeds.SeedMatch) *SeedConti
 
 		//and now trim to just the overlap
 		s,_  = s.Trimmed(overlaps[0].SeqA.GetSeedOffset(lap.MatchA[0], k), lap.MatchB[0], overlaps[0].SeqA.GetSeedOffsetFromEnd(lap.MatchA[len(lap.MatchA)-1], k), lap.MatchB[len(lap.MatchB)-1], k)
-		/*
-		anchor -= trimmed
-		if anchor < 0 || anchor > s.GetNumSeeds() {
-			//in this case, s only partially overlaps the query, missing the crucial centre seed
-			continue
-		}
-		anchors = append(anchors, anchor)
-		anchorOffsets = append(anchorOffsets, offset)
-		mismatches = append(mismatches, fullSeeds-len(lap.MatchA))
-		*/
 		seqs = append(seqs, s)
 	}
 	if len(seqs) > 1 {
 		mal := seeds.NewMultiAligner()
 		_, overlap := mal.Consensus(seqs,k)
-		//overlap := seeds.Consensus(seqs, mismatches, anchors, anchorOffsets, k)
 		if len(overlap) > 1 {
 			return NewSeedContig(overlap, k)
 		}

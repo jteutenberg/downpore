@@ -573,6 +573,13 @@ func (set *IntSet) AsInts() []int {
 	}
 	return ids
 }
+func (set *IntSet) AsUints() []uint {
+	ids := make([]uint, 0, set.count)
+	for ok, id := set.GetFirstID(); ok; ok, id = set.GetNextID(id) {
+		ids = append(ids, id)
+	}
+	return ids
+}
 
 func (set *IntSet) CountMembers() uint {
 	count := 0

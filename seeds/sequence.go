@@ -32,8 +32,13 @@ type SeedMatch struct {
 }
 
 //LoadSequence produces an otherwise "null" SeedSequence wrapping the giving segments. Useful for testing.
-func LoadSequence(segments []int) *SeedSequence {
-	return &SeedSequence{segments: segments}
+func LoadSequence(segments []int,k int) *SeedSequence {
+	s := SeedSequence{segments: segments}
+	s.length = -k
+	for i := 0; i < len(segments); i += 2 {
+		s.length += segments[i]+k
+	}
+	return &s
 }
 
 //SubSequence creates a new SeedSequence, keeping the given start and end seed indices
@@ -181,6 +186,10 @@ func (s *SeedSequence) GetOffset() int {
 }
 func (s *SeedSequence) GetInset() int {
 	return s.inset
+}
+func (s *SeedSequence) SetOffsets(offset,inset int) {
+	s.offset = offset
+	s.inset = inset
 }
 
 //GetLength gets the length of this seed sequence in bases

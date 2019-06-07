@@ -385,22 +385,85 @@ func (d *dtw) updateCosts(s *state, prev *state, index int) (int, int, uint16, b
 	return minPos, exact, uint16(minCost), pos+minPos-centre >= d.measure.GetSequenceLen(index)-1
 }
 
-func (s *state) traceBack(kmers chan uint16, costs chan *QualityMetrics) *state {
+func isHomopolymer(kmer uint16, k int) bool {
+	prev := kmer & 0x3
+	kmer = kmer >> 2
+	k--
+	for k > 0 {
+		next := kmer & 0x3
+		if next != prev {
+			return false
+		}
+		prev = next
+		k--
+		kmer = kmer >> 2
+	}
+	return true
+}
+
+func getRunLength(seq []uint16, pos int) int {
+	kmer := seq[pos]
+	count := 1
+	for i := pos-1; i >= 0 && seq[i] == kmer ; i-- {
+		count++
+	}
+	for i := pos+1; i < len(seq) && seq[i] == kmer ; i++ {
+		count++
+	}
+	return count
+}
+
+func (s *state) traceBack(kmers chan uint16, costs chan *QualityMetrics, k int, seqs [][]uint16) *state {
 	cost := QualityMetrics{CostDelta: s.minCost}
 	final := s
 	if s.prev != nil {
 		cost.CostDelta -= s.prev.minCost
-		final = s.prev.traceBack(kmers, costs)
-		s.prev = nil //help the GC
+		final = s.prev.traceBack(kmers, costs, k, seqs)
 	}
-	cost.ExactFraction = s.votes
-	cost.StateSpaceSize = s.spaceSize
-	kmers <- s.k
-	costs <- &cost
+	//fmt.Println(k,s.k,sequence.KmerString(int(s.k),k),isHomopolymer(s.k, k))
+	if isHomopolymer(s.k, k) {
+		if s.prev == nil || s.prev.k != s.k {
+			counts := make([]int,len(s.offsets[0]))
+			//count run-length of 0s in each s.offsets
+			for i, offs := range(s.offsets) {
+				runLen := 0
+				for j, v := range(offs) {
+					if v == 0 && seqs[i][int(s.positions[i])+j-len(offs)/2] == s.k {
+						runLen = getRunLength(seqs[i],int(s.positions[i])+j-len(offs)/2)
+						break
+					}
+				}
+				//TODO: ignore any with non-contiguous 0s
+				counts[runLen]++
+				//fmt.Println(i,runLen)
+			}
+			extras := 0
+			for i := 1; i < len(counts); i++ {
+				if counts[i] > counts[extras] {
+					extras = i
+				}
+			}
+			//fmt.Println(counts,extras)
+			//potentially send on extra kmers and cost entries
+			for extras > 0 {
+				c := QualityMetrics{CostDelta: s.minCost,ExactFraction: s.votes, StateSpaceSize: s.spaceSize}
+				kmers <- s.k
+				costs <- &c
+				extras--
+			}
+		}
+		s.prev = nil //help the GC
+	} else {
+		s.prev = nil //help the GC
+		cost.ExactFraction = s.votes
+		cost.StateSpaceSize = s.spaceSize
+		kmers <- s.k
+		costs <- &cost
+	}
 	return final
 }
 
-func (s *state) traceBackFull(kmers chan uint16, costs chan *QualityMetrics, positions chan []int) *state {
+func (s *state) traceBackFull(kmers chan uint16, costs chan *QualityMetrics, positions chan []int, k int) *state {
 	currentPos := make([]int, len(s.positions), len(s.positions))
 	for i := 0; i < len(currentPos); i++ {
 		bestPos := len(s.offsets[0]) - 1
@@ -414,10 +477,10 @@ func (s *state) traceBackFull(kmers chan uint16, costs chan *QualityMetrics, pos
 		//currentPos is position in the (whole) sequence
 		currentPos[i] = int(s.positions[i]) + bestPos - len(s.offsets[i])/2
 	}
-	return s.traceBackFullAt(currentPos, kmers, costs, positions)
+	return s.traceBackFullAt(currentPos, kmers, costs, positions, k)
 }
 
-func (s *state) traceBackFullAt(currentPos []int, kmers chan uint16, costs chan *QualityMetrics, positions chan []int) *state {
+func (s *state) traceBackFullAt(currentPos []int, kmers chan uint16, costs chan *QualityMetrics, positions chan []int, k int) *state {
 	var cost QualityMetrics
 	pos := make([]int, len(s.offsets), len(s.offsets))
 	final := s
@@ -444,7 +507,7 @@ func (s *state) traceBackFullAt(currentPos []int, kmers chan uint16, costs chan 
 	cost.CostDelta = s.minCost
 	if s.prev != nil {
 		cost.CostDelta -= s.prev.minCost
-		final = s.prev.traceBackFullAt(pos, kmers, costs, positions)
+		final = s.prev.traceBackFullAt(pos, kmers, costs, positions, k)
 		s.prev = nil //help the GC
 	}
 	cost.ExactFraction = s.votes
@@ -554,7 +617,6 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 			vs[i] = uint16(8.0*s.quality[i]+0.5)
 		}
 
-
 		//four possible steps of k-mer
 		for i := uint16(0); i < 4; i++ {
 			nextK := shifted | i
@@ -653,7 +715,7 @@ func (d *dtw) nextStates(current []*state, next *[]*state) bool {
 				continue
 			}
 			if singleVote {
-				//remove all from offset except the exact match
+				//remove all from offset except the exact matches
 				successor.minCost += uint(successor.offsets[lastVoted][lastVotedIndex])
 				if debug {
 					fmt.Println("Fixed to single pos on sequence",lastVoted,"at index",lastVotedIndex," cost now: ",successor.minCost)
@@ -1109,21 +1171,9 @@ func (d *dtw) GlobalConsensus() (<-chan uint16, <-chan *QualityMetrics, <-chan *
 				fmt.Println()
 				fmt.Println("Length", d.depth, "have", len(next), "next states....")
 			}
-			//fmt.Println(d.expectedPositions)
-			//for _, s := range next {
-			//	fmt.Println(sequence.KmerString(int(s.k),int(d.k)),"(",s.nextLandmark,")\n",s.positions)
-			//}
-			/*for _, s := range next {
-				fmt.Print(sequence.KmerString(int(s.k),int(d.k)),"(",s.nextLandmark,"),")
-			}
-			fmt.Println()*/
-			//for _, lm := range d.landmarks {
-			//	fmt.Print(sequence.KmerString(int(lm.k),int(d.k)),"->")
-			//}
-			//fmt.Println()
 
-			if !finished && len(next) == 1 && next[0].prev != nil {
-				next[0].prev.traceBack(basesOut, costsOut)
+			if !finished && len(next) == 1 && next[0].prev != nil && !isHomopolymer(next[0].k,d.k) {
+				next[0].prev.traceBack(basesOut, costsOut, d.k, seqs)
 				next[0].prev = nil
 			}
 			if len(next) == 0 {
@@ -1140,7 +1190,7 @@ func (d *dtw) GlobalConsensus() (<-chan uint16, <-chan *QualityMetrics, <-chan *
 					bestCost = s.minCost
 				}
 			}
-			firstState := states[best].traceBack(basesOut, costsOut)
+			firstState := states[best].traceBack(basesOut, costsOut, d.k, seqs)
 			//find best positions for each sequence
 			states[best].writeBestPositions()
 			firstState.writeBestPositions()
@@ -1172,7 +1222,7 @@ func (d *dtw) GlobalAlignment() (<-chan uint16, <-chan *QualityMetrics, <-chan [
 		for !finished {
 			finished = d.nextStates(states, &next)
 			if !finished && len(next) == 1 && next[0].prev != nil {
-				next[0].prev.traceBackFull(basesOut, costsOut, posOut)
+				next[0].prev.traceBackFull(basesOut, costsOut, posOut, d.k)
 				next[0].prev = nil
 			}
 			if len(next) == 0 {
@@ -1189,8 +1239,7 @@ func (d *dtw) GlobalAlignment() (<-chan uint16, <-chan *QualityMetrics, <-chan [
 					bestCost = s.minCost
 				}
 			}
-			states[best].traceBackFull(basesOut, costsOut, posOut)
-			//fmt.Println(states[best].positions)
+			states[best].traceBackFull(basesOut, costsOut, posOut, d.k)
 		}
 		close(posOut)
 		close(basesOut)
@@ -1218,7 +1267,7 @@ func (d *dtw) GlobalAlignmentTo(reference []uint16) (<-chan uint16, <-chan *Qual
 			finished = d.nextState(states, &next, reference[i])
 			next, states = states[:0], next
 		}
-		states[0].traceBackFull(basesOut, costsOut, posOut)
+		states[0].traceBackFull(basesOut, costsOut, posOut, d.k)
 		close(basesOut)
 		close(posOut)
 		close(costsOut)

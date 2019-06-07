@@ -25,7 +25,11 @@ func BuildConsensus(contig *overlap.SeedContig, sequences []sequence.Sequence, m
 	rcs := make([]bool, 0, len(contig.Parts))
 	seqMap := make([]int,0, len(contig.Parts)) //map used sequences to their indices in contig.Parts
 	//pick contigs to use
+	baseSeqIndex := -1
 	for i, id := range contig.Parts {
+		if contig.Matches != nil && contig.Matches[i].SeqA.GetID() == contig.Matches[i].SeqB.GetID() {
+			baseSeqIndex = i
+		}
 		if contig.Approximate[i] {
 			continue
 		}
@@ -55,12 +59,13 @@ func BuildConsensus(contig *overlap.SeedContig, sequences []sequence.Sequence, m
 		if contig.ReverseComplement[i] {
 			b = b.ReverseComplement()
 		}
+
 		rcs = append(rcs, contig.ReverseComplement[i])
 		seqs = append(seqs, b.ShortKmers(k, false))
 		seqMap = append(seqMap, i)
 	}
 	if len(seqs) < 3 {
-		fmt.Println("Down to",len(seqs),"from",len(contig.Parts),"due to approximate end matching.")
+		//fmt.Println("Down to",len(seqs),"from",len(contig.Parts),"due to approximate end matching.")
 		return nil, nil
 	}
 	//fmt.Println("using",len(seqs),"ones with good start locations")
@@ -95,11 +100,11 @@ func BuildConsensus(contig *overlap.SeedContig, sequences []sequence.Sequence, m
 		return nil, nil
 	}
 
-	consensus := sequence.NewByteSequenceFromKmers(-1,ks,k)
+	consensusLen := len(ks)-k+1
 
 	//update start and end positions of each sequence used
 	for i := 0; i < len(contig.Lengths); i++ {
-		contig.Lengths[i] = consensus.Len()
+		contig.Lengths[i] = consensusLen
 		contig.Approximate[i] = true
 	}
 	for i, index := range seqMap {
@@ -111,6 +116,16 @@ func BuildConsensus(contig *overlap.SeedContig, sequences []sequence.Sequence, m
 			contig.Offsets[index] += startPositions[i]
 		}
 		contig.Lengths[index] = endPositions[i] - startPositions[i] + k - 1
+	}
+	var consensus sequence.Sequence
+	if baseSeqIndex == -1 {
+		consensus = sequence.NewByteSequenceFromKmers(-1,ks,k)
+		//consensus = sequence.NewByteSubSequenceFromKmers(contig.Parts[ baseSeqIndex ],ks,k,consensusOffset,consensusInset)
+	} else {
+		//treat this as a subsequence, even though it is now has consensus contents
+		consensusOffset := contig.Offsets[baseSeqIndex]
+		consensusInset := contig.SeqLengths[baseSeqIndex] - consensusOffset - consensusLen
+		consensus = sequence.NewByteSubSequenceFromKmers(contig.Parts[ baseSeqIndex ],ks,k,consensusOffset,consensusInset)
 	}
 	return contig, consensus
 }

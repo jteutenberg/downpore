@@ -254,7 +254,7 @@ func (ma *multiAligner) Consensus(seqs []*SeedSequence, k int) (*SeedSequence,[]
 		finished = fCount >= len(seqs)
 	}
 	consensus = append(consensus,0) //TODO: set to the gap for each?
-	seedCons := LoadSequence(consensus)
+	seedCons := LoadSequence(consensus,k)
 	for i := len(matches)-1; i >= 0; i-- {
 		m := matches[i]
 		if m == nil || len(m.MatchA) < 3 {

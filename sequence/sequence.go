@@ -92,6 +92,18 @@ func NewPackedSequence(id int, seq string, name *string) Sequence {
 	return &s
 }
 
+func NewByteSubSequenceFromKmers(id int, kmers []uint16, k int, offset,inset int) Sequence {
+	data := make([]byte, len(kmers)+k-1, len(kmers)+k-1)
+	for i := 0; i < k-1; i++ {
+		data[i] = byte((kmers[0] >> (2 * uint(k-i-1))) & 3)
+	}
+	for i, kmer := range kmers {
+		data[i+k-1] = byte(kmer & 3)
+	}
+	s := byteSequence{data: data, quality: nil, id: id, offset: offset, inset: inset}
+	return &s
+}
+
 func NewByteSequenceFromKmers(id int, kmers []uint16, k int) Sequence {
 	data := make([]byte, len(kmers)+k-1, len(kmers)+k-1)
 	for i := 0; i < k-1; i++ {
@@ -100,7 +112,7 @@ func NewByteSequenceFromKmers(id int, kmers []uint16, k int) Sequence {
 	for i, kmer := range kmers {
 		data[i+k-1] = byte(kmer & 3)
 	}
-	s := byteSequence{data: data, quality: nil, id: id, offset: 0, inset: 0}
+	s := byteSequence{data: data, quality: nil, id: id}
 	return &s
 }
 

@@ -51,7 +51,7 @@ func parseArgs(com commands.Command) map[string]string {
 }
 
 func main() {
-	coms := []commands.Command{commands.NewOverlapCommand(), commands.NewMapCommand(), commands.NewTrimCommand(),commands.NewSubSeqCommand(), commands.NewConsensusCommand(), commands.NewAlignCommand(), commands.NewFullDenovoCommand(),commands.NewKmersCommand()}
+	coms := []commands.Command{commands.NewOverlapCommand(), commands.NewMapCommand(), commands.NewTrimCommand(),commands.NewSubSeqCommand(), commands.NewConsensusCommand(), commands.NewAlignCommand(), commands.NewCorrectCommand(),commands.NewKmersCommand()}
 	if len(os.Args) == 1 {
 		fmt.Println("Available commands:\n help <command> Describe the command and its arguments")
 		for _, com := range coms {

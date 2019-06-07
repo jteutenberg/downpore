@@ -41,7 +41,7 @@ func getKmerValues(filename string, k, numWorkers int, seqSet sequence.SequenceS
 	kmerCounts := sequtil.KmerOccurrences(seqSet.GetSequences(), k, numWorkers)
 	var values []float64
 	if filename == "" {
-		values = make([]float64, len(kmerCounts))
+		/*values = make([]float64, len(kmerCounts))
 		for i, count := range kmerCounts {
 			if count >= 3 {
 				j := seeds.ReverseComplement(uint(i), uint(k))
@@ -50,6 +50,24 @@ func getKmerValues(filename string, k, numWorkers int, seqSet sequence.SequenceS
 					ratio = -ratio
 				}
 				values[i] = 1.0 - ratio //high value is good
+			}
+		}*/
+		values = make([]float64, len(kmerCounts))
+		var tot uint64
+		for _, count := range kmerCounts {
+			tot += count
+		}
+		tf := float64(tot)
+		//aim for fairly low frequency: about 1:200000 bases?
+		targetFreq := 0.000005
+		for i, count := range kmerCounts {
+			freq := float64(count) / tf
+			if count < 3 {
+				values[i] = 0
+			} else if freq <= targetFreq {
+				values[i] = 1.0 - (targetFreq - freq)
+			} else {
+				values[i] = 1.0 - (freq - targetFreq)
 			}
 		}
 	} else {

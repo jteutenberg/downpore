@@ -37,9 +37,12 @@ func (com *subseqCommand) Run(args map[string]string) {
 	ids := make(map[string]int) //map sequence names to ids in the sequence set
 	seqs := seqSet.GetSequences()
 	for seq := range seqs {
-		ids[seq.GetName()] = seq.GetID()
+		name := seq.GetName()
+		ids[name] = seq.GetID()
+		if split := strings.Index(name," "); split > 0 && split < len(name) {
+			ids[name[:split]] = seq.GetID()
+		}
 	}
-
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -66,9 +69,9 @@ func (com *subseqCommand) Run(args map[string]string) {
 			seq = <-seqs
 		}
 		if seq != nil {
-			if name != seq.GetName() {
+			if !strings.HasPrefix(seq.GetName(),name) {
 				log.Println("Invalid name found:",seq.GetName()," != ",name)
-				fmt.Println(">n\n")
+				fmt.Println("Invalid name:",seq.GetName()," != ",name,"\n")
 				continue
 			}
 			fmt.Printf(">%s_%d\n", seq.GetName(), start)
@@ -92,6 +95,8 @@ func (com *subseqCommand) Run(args map[string]string) {
 					fmt.Println(subseq)
 				}
 			}
+		} else {
+			fmt.Println("No sequence found.")
 		}
 	}
 }

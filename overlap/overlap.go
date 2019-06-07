@@ -4,7 +4,6 @@ import (
 	"github.com/jteutenberg/downpore/seeds"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
-	"fmt"
 )
 
 //SeedQuery describes the input used to produce Overlaps from the current state of the Overlapper
@@ -121,9 +120,11 @@ func (lap *overlapper) getAll(numSeeds, seedLimit int, weightSides bool, seqsIn 
 	cached := make([]sequence.Sequence, 0, 5000)
 	for s := range seqsIn {
 		if lap.index.Size() >= seedLimit {
+			//drain the remaining input, discarding the sequences
+			for _ = range seqsIn {
+			}
 			break
 		}
-		fmt.Println("next sequence has length",s.Len())
 		if s.Len() < lap.overlap*2 {
 			if weightSides {
 				addWeighted(s, subseqsOut)
@@ -133,6 +134,7 @@ func (lap *overlapper) getAll(numSeeds, seedLimit int, weightSides bool, seqsIn 
 			cached = append(cached, s)
 		} else {
 			slices := s.Len() / lap.overlap
+			//non-overlapping slices
 			for i := 0; i < slices; i++ {
 				start := (i * s.Len())/slices
 				end := ((i+1) * s.Len())/slices
@@ -148,9 +150,6 @@ func (lap *overlapper) getAll(numSeeds, seedLimit int, weightSides bool, seqsIn 
 				cached = append(cached, sub)
 			}
 		}
-	}
-	//drain the remaining input, discarding the sequences
-	for _ = range seqsIn {
 	}
 	return cached
 }

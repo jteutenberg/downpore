@@ -14,30 +14,30 @@ import (
 	"sort"
 )
 
-type fulldenovoCommand struct {
+type correctCommand struct {
 	args  map[string]string
 	alias map[string]string
 	desc  map[string]string
 }
 
-func NewFullDenovoCommand() Command {
+func NewCorrectCommand() Command {
 	args, alias, desc := MakeArgs(
 		[]string{"overlap_size", "num_seeds", "seed_batch_size", "chunk_size", "k", "min_hits","num_workers", "input", "trim", "front_adapters", "back_adapters","model","himem"},
 		[]string{"1000", "15", "10000", "10000", "10","0.25","4","", "0", "", "","","true"},
 		[]string{"Size of overlap to search for in bases", "Minimum number of seeds to generate for each overlap query", "Maximum total unique seeds to use in each query batch", "Size to chop long reads into for querying against, in bases", "Number of bases in each seed", "Minimum proportion of seeds that must match each query", "Number of worker threads to spawn", "Fasta/fastq input file", "Whether to search for and trim adapters: 0=off, 1=on", "Fasta/fastq file containing front adapters", "Fasta/fastq file containing back adapters","K-mer numeric values to use in alignment","Whether to cache all reads in memory"})
-	ov := fulldenovoCommand{args: args, alias: alias, desc: desc}
+	ov := correctCommand{args: args, alias: alias, desc: desc}
 	return &ov
 }
 
-func (com *fulldenovoCommand) GetName() string {
-	return "fulldenovo"
+func (com *correctCommand) GetName() string {
+	return "correct"
 }
 
-func (com *fulldenovoCommand) GetArgs() (map[string]string, map[string]string, map[string]string) {
+func (com *correctCommand) GetArgs() (map[string]string, map[string]string, map[string]string) {
 	return com.args, com.alias, com.desc
 }
 
-func (com *fulldenovoCommand) Run(args map[string]string) {
+func (com *correctCommand) Run(args map[string]string) {
 	overlapSize := ParseInt(args["overlap_size"])
 	numSeeds := ParseInt(args["num_seeds"]) //minimum seeds per overlap region
 	seedBatchSize := int(ParseInt(args["seed_batch_size"]))
@@ -49,8 +49,6 @@ func (com *fulldenovoCommand) Run(args map[string]string) {
 	if args["model"] != "" {
 		mod = model.NewModel(args["model"], false)
 	}
-
-	var overlapGraph *overlap.OverlapGraph
 
 	seqSet := sequence.NewFastaSequenceSet(args["input"], overlapSize, numWorkers, ParseBool(args["himem"]), false)
 
@@ -65,29 +63,32 @@ func (com *fulldenovoCommand) Run(args map[string]string) {
 	f, _ := os.Create("./cprof")
 	pprof.StartCPUProfile(f)
 	for ;; {
-		//first select any extensions from the graph?
-		approxSeeds := 0
 		numQuerySeqs := 1
-		//then select some long sequences to top up with
+		//find the longest reamining sequences
 		ids, lengths := seqSet.GetIDsByLength()
-		if len(ids) == 0 {
-			break //no more sequences
+		if len(ids) == 0 || lengths[len(lengths)-1] < 1000 {
+			break //no more reasonable-length sequences
 		}
+		//pick some sequences til we think we'll get around the right number of seeds
 		last := len(lengths)-1
 		start := last
-		approxSeeds += (lengths[start]/overlapSize + 1)*numSeeds
+		approxSeeds := (lengths[start]/overlapSize + 1)*numSeeds
 		for start >= 0 && approxSeeds < seedBatchSize {
 			approxSeeds += (lengths[start]/overlapSize + 1)*numSeeds
 			start--
 			numQuerySeqs++
 		}
 		if start < last {
+			//TODO: TEMP
+			start = last-1
 			ids = ids[start+1:]
-			fmt.Println("Using",len(lengths)-start,"sequences with lengths",lengths[last],"to",lengths[start+1])
+			fmt.Println("Using",len(lengths)-(start+1),"sequences with lengths",lengths[last],"to",lengths[start+1])
 		} else {
 			ids = ids[last:]
 			fmt.Println("Using one sequence with length",lengths[last])
 		}
+
+		fmt.Println("Query ids are ",ids)
 
 		//prepare overlappers, get the next query set
 		seqs := seqSet.GetSequencesByID(ids)
@@ -97,58 +98,34 @@ func (com *fulldenovoCommand) Run(args map[string]string) {
 
 		fmt.Println("Produced a query set of", len(queries), "queries using", seedIndex.Size(), "seeds.")
 
-
 		// 1. get query results (collated by long query, ordered)
 		results := performQueries(queries, overlapper, overlapSize, seedIndex, seqSet, ids)
-		c1 := 0
-		c2 := 0
+		c1 := 0 //count of all shorter reads found matching a query
 		sentCount := 0
 		successfulCount := 0
 		seedConsensus := make([][]*overlap.SeedContig, len(results))
 		seqIds := util.NewIntSetCapacity(seqSet.Size())
 		for j, rs := range results {
-			for _,hits:= range rs {
+			for _,hits := range rs {
+				//NOTE: this also sorts the hits in a non-useful order!
 				removeDuplicates(&hits)
 				c1 += len(hits)
 			}
 			// 2. remove any that don't match across whole length
+			sort.Sort(byOffset(rs))
 			overlap.CleanupOverlaps(rs, overlapSize, k)
-			seedConsensus[j] = make([]*overlap.SeedContig, len(rs))
-			for i, hits := range rs {
-				fmt.Print(i)
-				for _,m := range hits {
-					fmt.Print(",",m.SeqB.GetID())
-				}
-				fmt.Println()
-				c2 += len(hits)
-				// 3. consensus, left to right
-				// a. seed-space consensus first
-				if len(hits) >= 3 {
-					sentCount++
-					contig := overlap.BuildConsensus(seedIndex, hits)
-					if contig != nil && len(contig.Parts) >= 3 {
-						successfulCount++
-						seedConsensus[j][i] = contig
-						//take note of the required sequences for later base-space consensus
-						for _, part := range contig.Parts {
-							seqIds.Add(uint(part))
-						}
-					}
-				}
-			}
-		}
-		fmt.Println("Attempted ",sentCount,"consensuses, succeeding with",successfulCount)
 
-		if overlapGraph == nil {
-			//TODO: makes more sense to get the number of sequences from the sequence set
-			overlapGraph = overlap.NewOverlapGraph(int(seedIndex.GetNumSequences()))
+			seedConsensus[j] = seedSpaceConsensus(rs,seedIndex,seqIds)
 		}
+		//Note: at this point the contigs are seed sequences aligned to a "seed consensus" with id of the original long sequence
+
+		fmt.Println("Attempted",sentCount,"seed-space consensuses, succeeding with",successfulCount)
 
 		//Throw out the seed index. Its job is done.
 		seedIndex.Destroy()
 		allSeq := getAllSequences(seqIds, seqSet)
 
-		fmt.Println("Preparing consensus of all query results.")
+		fmt.Println("Preparing base-space consensus of all query results.")
 		allConsensus := make(chan sequence.Sequence, numWorkers)
 		contigsIn := make(chan *overlap.SeedContig, numWorkers)
 		//setup workers to prepare consensus sequences from overlaps
@@ -190,7 +167,6 @@ func (com *fulldenovoCommand) Run(args map[string]string) {
 		var nextQueries []*overlap.SeedQuery
 		go func() {
 			nextQueries = overlapper.PrepareQueries(numSeeds, seedBatchSize, values, queryIn, overlap.QueryAll)
-			fmt.Println("Turned",len(nextQueries)/2,"consensus sequences into queries.")
 			queriesReady <- true
 		}()
 		//wait for all consensus sequences to be completed before closing the output channel
@@ -201,46 +177,94 @@ func (com *fulldenovoCommand) Run(args map[string]string) {
 
 		<-queriesReady
 		refinedResults := performQueries(nextQueries, overlapper, overlapSize, seedIndex, seqSet, ids)
-		seedIndex.Destroy()
-		fmt.Println("FINAL:")
-		for _, rs := range refinedResults {
+		//prepare for seed-space consensus of the second round. Overwrite with new allocations to help garbage collection
+		seedConsensus = make([][]*overlap.SeedContig, len(refinedResults))
+		seqIds.Clear()
+		fmt.Println("FINAL query results (",len(refinedResults),"):")
+		for j, rs := range refinedResults {
+			fmt.Println("Refined results ",j," has ",len(rs),"contigs")
 			for _,hits:= range rs {
 				removeDuplicates(&hits)
 			}
+			fmt.Println("After removing duplicates:",len(rs),"contigs")
+			sort.Sort(byOffset(rs)) //not sure whether we need this here. Can't hurt.
 			overlap.CleanupOverlaps(rs, overlapSize, k)
-			for i, hits := range rs {
+			seedConsensus[j] = seedSpaceConsensus(rs,seedIndex,seqIds)
+			/*for i, hits := range rs {
 				fmt.Print(i)
 				for _,m := range hits {
 					fmt.Print(",",m.SeqB.GetID())
 				}
 				fmt.Println()
-			}
+			}*/
 		}
-		//TODO:
-		// . fill in any missing sequences to get full sets
-		// 5. re-query
-		// 6. repeat checks but save flaps etc. Goes into the graph
+		seedIndex.Destroy()
+		// 4. Generate pileup of "non-flapping" sequences, mark flapping regions
+		overlap.NewPileup(seedConsensus[0])
 
-		//prepare new queries from the consensus sequences
+		// 5. Take consensus over longer contiguous regions
+		// 6. Flag to ignore short reads within non-flapping regions
+		// 7. Output the corrected reads
 
-		//turn off any future sequences that are in the graph
-		covered := overlapGraph.GetCoveredSequences()
+		//"pileup" package, or go in overlap/pileup.go <-
+		// handle the "series of subsequences" format
+		// - clean up those that aren't in order (from graph.go)
+		// - test for overhangs (from graph.go)
+		// - select subsequences for max length contiguous segments with coverage @~90% max
+
+		//TODO: move the covered test out of the overlap graph
+		// as a per-sequence check
+		/*covered := overlapGraph.GetCoveredSequences()
 		coveredCount := 0
 		for i := 0; i < len(covered); i++ {
 			if covered[i] {
 				seqSet.SetIgnore(i,true)
 				coveredCount++
 			}
-		}
-		fmt.Println("Ignoring ", coveredCount, " of the future sequences.")
+		}*/
+		//fmt.Println("Ignoring ", coveredCount, " of the future sequences.")
 		break
 	}
-	overlapGraph.GenerateArcs()
-	overlapGraph.PrintGFA()
 
 	//fmt.Println("tried to linearise from:",overlapGraph.Linearise())
 	pprof.StopCPUProfile()
 	f.Close()
+}
+
+func seedSpaceConsensus(rs [][]*seeds.SeedMatch, seedIndex *seeds.SeedIndex, seqIds *util.IntSet) []*overlap.SeedContig {
+	seedConsensus := make([]*overlap.SeedContig, len(rs))
+	for i, hits := range rs {
+		if len(hits) >= 3 {
+			contig := overlap.BuildConsensus(seedIndex, hits)
+			if contig != nil && len(contig.Parts) >= 3 {
+				seedConsensus[i] = contig
+				//take note of the required sequences for later base-space consensus
+				for _, part := range contig.Parts {
+					seqIds.Add(uint(part))
+				}
+				//slight hack: give the seed consensus the id of the original query
+				originalID := hits[0].SeqA.GetID()
+				contig.Combined.SetID(originalID)
+				//which hit is on the original?
+				original := -1
+				for k, part := range contig.Parts {
+					if part == originalID {
+						original = k
+						break
+					}
+				}
+				//and we also need to set its offsets
+				if original == -1 {
+					fmt.Println("WARNING: seed consensus does not contain original sequence.")
+					contig.Combined.SetOffsets(hits[0].SeqA.GetOffset(), hits[0].SeqA.GetInset())
+				} else {
+					//TODO: recalculate the inset too
+					contig.Combined.SetOffsets(hits[0].SeqA.GetOffset() + contig.Offsets[original], hits[0].SeqA.GetInset())
+				}
+			}
+		}
+	}
+	return seedConsensus
 }
 
 //performQueries indexes all sequences and finds matches for all queries. Matches are returned in in-order collections per query sequence.
@@ -254,7 +278,7 @@ func performQueries(queries []*overlap.SeedQuery, overlapper overlap.Overlapper,
 	for i, id := range querySequences {
 		queryResults[i] = make([][]*seeds.SeedMatch, 0, seqSet.GetLength(id)/overlapSize + 1)
 	}
-	//because the queries are in-order, we can run through them..
+	//run through the queries, they will be collated by sequence, we'll put them in order later
 	index := 0
 	prevSeq := -1
 	for _, q := range queries {
@@ -286,26 +310,6 @@ func performQueries(queries []*overlap.SeedQuery, overlapper overlap.Overlapper,
 	return queryResults
 }
 
-/*
-//refineQueries queries each consensus sequence is queried and the results replace entries in oldResults. 
-func refineQueries(queries []*overlap.SeedQuery, overlapper overlap.Overlapper, overlapSize int, seedIndex *seeds.SeedIndex, seqSet sequence.SequenceSet, querySequences []int) [][][]*seeds.SeedMatch {
-func refineQueries(consensus [][]sequence.Sequence, oldResults [][][]*seeds.SeedMatch, overlapSize int, seqSet sequence.SequenceSet, numWorkers int) {
-
-	//2. Index ...
-	seqs := seqSet.GetSequences()
-	overlapper.AddSequences(seqs)
-
-	//3. ... and perform the query
-	matches := overlapper.FindOverlaps(queries)
-	for match := range matches {
-		seqId := match.SeqA.GetID() //the query sequence
-		fmt.Println("Query ",seqId)
-		for i,p := range match.Parts {
-			fmt.Println(i,":",p)
-		}
-	}
-}*/
-
 //a sortable version of seed match slices
 type byID []*seeds.SeedMatch
 
@@ -319,6 +323,19 @@ func (a byID) Less(i, j int) bool {
 		return a[i].SeqB.GetOffset() < a[j].SeqB.GetOffset()
 	}
 	return idA < idB
+}
+//sort a list of list of matches by their shared target sequence
+type byOffset [][]*seeds.SeedMatch
+
+func (a byOffset) Len() int           { return len(a) }
+func (a byOffset) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a byOffset) Less(i, j int) bool {
+	if len(a[i]) == 0 {
+		return len(a[j]) == 0
+	} else if len(a[j]) == 0 {
+		return false
+	}
+	return a[i][0].SeqA.GetOffset() < a[j][0].SeqA.GetOffset()
 }
 
 func removeDuplicates(results *[]*seeds.SeedMatch) {
@@ -335,7 +352,10 @@ func removeDuplicates(results *[]*seeds.SeedMatch) {
 			centre2 := (prev.SeqB.GetOffset() + prev.SeqB.GetLength())/2
 			if (centre1 > prev.SeqB.GetOffset() && centre1-prev.SeqB.GetOffset() < prev.SeqB.GetLength()) || (centre2 > m.SeqB.GetOffset() && centre2-m.SeqB.GetOffset() < m.SeqB.GetLength()) {
 				n := len(rs) - 1
-				rs[i] = rs[n]
+				if i < n {
+					copy(rs[i:],rs[i+1:])
+				}
+				//rs[i] = rs[n]
 				rs = rs[:n]
 			}
 		}
@@ -359,52 +379,10 @@ func getAllSequences(ids *util.IntSet, sequences sequence.SequenceSet) []sequenc
 
 func consensusWorker(contigs <-chan *overlap.SeedContig, sequences []sequence.Sequence, model model.Model, done chan<- bool, output chan<- sequence.Sequence) {
 	for contig := range contigs {
-		/*for _, m := range contig.Matches {
-			fmt.Println(m.MatchA, m.MatchB, m.SeqB.GetSeedOffset(m.MatchB[0],10)) // consensus seeds matched
-			fmt.Println(m.SeqB.String())
-		}
-		for i, part := range contig.Parts {
-			end := contig.Offsets[i]+contig.Lengths[i]
-			start := contig.Offsets[i]
-			if end > sequences[part].Len() {
-				fmt.Println("over length")
-				if end > sequences[part].Len()+10 {
-					continue
-				}
-				end = sequences[part].Len()
-			}
-			if start < 0 {
-				fmt.Println("under start")
-				if start < -10 {
-					continue
-				}
-				start = 0
-			}
-			s := sequences[part].SubSequence(start,end)
-			if contig.ReverseComplement[i] {
-				s = s.ReverseComplement()
-			}
-			fmt.Println("@",i,contig.ReverseComplement[i])
-				fmt.Println(s.String())
-			fmt.Println("+")
-			qs := s.Quality()
-			if qs != nil {
-				for j,q := range qs {
-					qs[j] = q+33
-				}
-				fmt.Println(string(qs))
-			} else {
-				for j := 0; j < s.Len(); j++ {
-					fmt.Print('A')
-				}
-				fmt.Println()
-			}
-		}*/
 		if _, cons := consensus.BuildConsensus(contig, sequences, model, false); cons != nil {
 			//fmt.Println(cons.String())
 			if output != nil {
 				output <- cons
-				//TODO: we want the start/end positions for each component sequence too
 			}
 		}
 	}
