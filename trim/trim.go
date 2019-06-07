@@ -1,6 +1,7 @@
 package trim
 
 import (
+	"fmt"
 	"github.com/jteutenberg/downpore/seeds"
 	"github.com/jteutenberg/downpore/sequence"
 	"github.com/jteutenberg/downpore/util"
@@ -225,15 +226,31 @@ func (t *Trimmer) Trim(seqs sequence.SequenceSet, numWorkers int) {
 	}
 	for _, id := range ids {
 		split := splits[id]
+		if split == nil {
+			continue
+		}
 		seq := splitSeqs[id]
-		//Note: if it is 3+ combined sequences it only keeps the first and last
 		if t.keepSplits {
-			if t.verbosity > 1 {
-				log.Println("Splitting read ", split.id, " into: 0 -", split.aEnd, "and", split.bStart, "-", seq.Len())
-				log.Println(seq.SubSequence(split.aEnd+t.extraMidTrim, split.bStart-t.extraMidTrim).String())
+			report := fmt.Sprint("Splitting read ", split.id, " into")
+			//test for invalid splits. This occurs when a second internal adapter reduces one side to less than minimum sequence length
+			if split.aEnd > edgeSize {
+				seqs.AddSequence(seq.SubSequence(0, split.aEnd), seqs.GetName(split.id)+"_(left)")
+				report += fmt.Sprint(": 0 - ",split.aEnd," and ")
+			} else {
+				report += " ignored short left hand side and "
 			}
-			seqs.AddSequence(seq.SubSequence(0, split.aEnd), seqs.GetName(split.id)+"_(left)")
-			seqs.AddSequence(seq.SubSequence(split.bStart, seq.Len()), seqs.GetName(split.id)+"_(right)")
+			if seq.Len()-split.bStart > edgeSize {
+				seqs.AddSequence(seq.SubSequence(split.bStart, seq.Len()), seqs.GetName(split.id)+"_(right)")
+				report += fmt.Sprint(split.bStart," - ",seq.Len())
+			} else {
+				report += " ignored short right hand side"
+			}
+			if t.verbosity > 1 {
+				log.Println(report)
+				if split.aEnd >= 0 && split.bStart < seq.Len() && split.bStart-split.aEnd-t.extraMidTrim*2 <= longestAdapter {
+					log.Println(seq.SubSequence(split.aEnd+t.extraMidTrim, split.bStart-t.extraMidTrim).String())
+				}
+			}
 		}
 		seqs.SetIgnore(split.id, true)
 	}
@@ -496,7 +513,7 @@ func (t *Trimmer) trimWorker(set sequence.SequenceSet, seqs <-chan sequence.Sequ
 }
 
 func (t *Trimmer) findSplit(ad *seeds.SeedSequence, adSet *util.IntSet, splits []*sequenceSplit, ids *[]int, maxID *int, seqs sequence.SequenceSet, done chan<- bool) {
-	edgeSize := 150
+	//edgeSize := 150
 	minSeqLength := 500 //splits need to be longer than this
 
 	minMatch := ad.GetNumSeeds() / 5
@@ -525,14 +542,19 @@ func (t *Trimmer) findSplit(ad *seeds.SeedSequence, adSet *util.IntSet, splits [
 				seqLen := target.GetOffset() + target.Len() + target.GetInset() - backTrim
 				if start < minSeqLength+frontTrim { //just crop the front off
 					newTrim := start+ad.Len()+t.extraMidTrim
-					if newTrim+edgeSize < seqLen {
+					if newTrim+minSeqLength < seqLen {
 						if newTrim > frontTrim {
-							seqs.SetFrontTrim(target.GetID(), start+ad.Len()+t.extraMidTrim)
+							seqs.SetFrontTrim(target.GetID(), newTrim)
+							if splits[id] != nil { //update the existing split
+								splits[id].aEnd -= (newTrim-frontTrim)
+								splits[id].bStart -= (newTrim-frontTrim)
+							}
 						}
 						if t.tagAdapters {
 							seqs.SetName(target.GetID(), ad.GetName()+"_"+seqs.GetName(target.GetID()))
 						}
 					} else {
+						splits[id] = nil //in case of existing split that is no longer valid
 						seqs.SetIgnore(target.GetID(), true)
 					}
 				} else if start+minSeqLength+ad.Len() > seqLen { //crop off the tail
