@@ -10,219 +10,219 @@ GAAGATAGAGCGACAGGCAAGT
 GCAATATCAGCACCAACAGAAA
 >PCR3
 GAAGATAGAGCGACAGGCAAGTA
->Barcode 1 (reverse)
+>Barcode-1-(reverse)
 AAGAAAGTTGTCGGTGTCTTTGTG
->Barcode 2 (reverse)
+>Barcode-2-(reverse)
 TCGATTCCGTTTGTAGTCGTCTGT
->Barcode 3 (reverse)
+>Barcode-3-(reverse)
 GAGTCTTGTGTCCCAGTTACCAGG
->Barcode 4 (reverse)
+>Barcode-4-(reverse)
 TTCGGATTCTATCGTGTTTCCCTA
->Barcode 5 (reverse)
+>Barcode-5-(reverse)
 CTTGTCCAGGGTTTGTGTAACCTT
->Barcode 6 (reverse)
+>Barcode-6-(reverse)
 TTCTCGCAAAGGCAGAAAGTAGTC
->Barcode 7 (reverse)
+>Barcode-7-(reverse)
 GTGTTACCGTGGGAATGAATCCTT
->Barcode 8 (reverse)
+>Barcode-8-(reverse)
 TTCAGGGAACAAACCAAGTTACGT
->Barcode 9 (reverse)
+>Barcode-9-(reverse)
 AACTAGGCACAGCGAGTCTTGGTT
->Barcode 10 (reverse)
+>Barcode-10-(reverse)
 AAGCGTTGAAACCTTTGTCCTCTC
->Barcode 11 (reverse)
+>Barcode-11-(reverse)
 GTTTCATCTATCGGAGGGAATGGA
->Barcode 12 (reverse)
+>Barcode-12-(reverse)
 CAGGTAGAAAGAAGCAGAATCGGA
->Barcode 1 (forward)
+>Barcode-1-(forward)
 CACAAAGACACCGACAACTTTCTT
->Barcode 2 (forward)
+>Barcode-2-(forward)
 ACAGACGACTACAAACGGAATCGA
->Barcode 3 (forward)
+>Barcode-3-(forward)
 CCTGGTAACTGGGACACAAGACTC
->Barcode 4 (forward)
+>Barcode-4-(forward)
 TAGGGAAACACGATAGAATCCGAA
->Barcode 5 (forward)
+>Barcode-5-(forward)
 AAGGTTACACAAACCCTGGACAAG
->Barcode 6 (forward)
+>Barcode-6-(forward)
 GACTACTTTCTGCCTTTGCGAGAA
->Barcode 7 (forward)
+>Barcode-7-(forward)
 AAGGATTCATTCCCACGGTAACAC
->Barcode 8 (forward)
+>Barcode-8-(forward)
 ACGTAACTTGGTTTGTTCCCTGAA
->Barcode 9 (forward)
+>Barcode-9-(forward)
 AACCAAGACTCGCTGTGCCTAGTT
->Barcode 10 (forward)
+>Barcode-10-(forward)
 GAGAGGACAAAGGTTTCAACGCTT
->Barcode 11 (forward)
+>Barcode-11-(forward)
 TCCATTCCCTCCGATAGATGAAAC
->Barcode 12 (forward)
+>Barcode-12-(forward)
 TCCGATTCTGCTTCTTTCTACCTG
->Barcode 13 (forward)
+>Barcode-13-(forward)
 TCACACGAGTATGGAAGTCGTTCT
->Barcode 14 (forward)
+>Barcode-14-(forward)
 TCTATGGGTCCCAAGAGACTCGTT
->Barcode 15 (forward)
+>Barcode-15-(forward)
 CAGTGGTGTTAGCGAGGTAGACCT
->Barcode 16 (forward)
+>Barcode-16-(forward)
 AGTACGAACCACTGTCAGTTGACG
->Barcode 17 (forward)
+>Barcode-17-(forward)
 ATCAGAGGTACTTTCCTGGAGGGT
->Barcode 18 (forward)
+>Barcode-18-(forward)
 GCCTATCTAGGTTGTTGGGTTTGG
->Barcode 19 (forward)
+>Barcode-19-(forward)
 ATCTCTTGACACTGCACGAGGAAC
->Barcode 20 (forward)
+>Barcode-20-(forward)
 ATGAGTTCTCGTAACAGGACGCAA
->Barcode 21 (forward)
+>Barcode-21-(forward)
 TAGAGAACGGACAATGAGAGGCTC
->Barcode 22 (forward)
+>Barcode-22-(forward)
 CGTACTTTGATACATGGCAGTGGT
->Barcode 23 (forward)
+>Barcode-23-(forward)
 CGAGGAGGTTCACTGGGTAGTAAG
->Barcode 24 (forward)
+>Barcode-24-(forward)
 CTAACCCATCATGCAGAACTATGC
->Barcode 25 (forward)
+>Barcode-25-(forward)
 CATTGCGTTGCATACCCAACTTAC
->Barcode 26 (forward)
+>Barcode-26-(forward)
 ATGAGAATGCGTAGTCGCTGTATG
->Barcode 27 (forward)
+>Barcode-27-(forward)
 TGTAAGAGGTGAATCTAACCGTCG
->Barcode 28 (forward)
+>Barcode-28-(forward)
 GATACGGTGCCTTCTTAGGTTTCA
->Barcode 29 (forward)
+>Barcode-29-(forward)
 GGTCTGTCAACCCAAGGTGTCTAG
->Barcode 30 (forward)
+>Barcode-30-(forward)
 TGGGTCGAAGTAGATCCTCACTGA
->Barcode 31 (forward)
+>Barcode-31-(forward)
 CAATGTAACTGATTGCTGTACGCA
->Barcode 32 (forward)
+>Barcode-32-(forward)
 ATGACGTTGTCGGACTTCTACTGG
->Barcode 33 (forward)
+>Barcode-33-(forward)
 AGTTACCCAACCGTACCAAGTCTG
->Barcode 34 (forward)
+>Barcode-34-(forward)
 GCCTTTGACTTGAGTTCTTCGTCC
->Barcode 35 (forward)
+>Barcode-35-(forward)
 GCAGTCCCTCAGCTTCGTAAGTAG
->Barcode 36 (forward)
+>Barcode-36-(forward)
 TGTTTCCTCCTCTAACTGGGACAT
->Barcode 37 (forward)
+>Barcode-37-(forward)
 TGATACTAAGCATCAATCGCAAGC
->Barcode 38 (forward)
+>Barcode-38-(forward)
 TTCTCTGTATCGTCCTCCTGTGGT
->Barcode 39 (forward)
+>Barcode-39-(forward)
 GAGAGGCTCTAGTTGACACTGTGG
->Barcode 40 (forward)
+>Barcode-40-(forward)
 GGCTATCCTTGGTCATCCAAACTA
->Barcode 41 (forward)
+>Barcode-41-(forward)
 CGTGTACTTCTCTGGACGAACTCC
->Barcode 42 (forward)
+>Barcode-42-(forward)
 CTGGCAGGTATGCCTTACACGTAG
->Barcode 43 (forward)
+>Barcode-43-(forward)
 CTACCGTCGAGTCAACAACGAAAG
->Barcode 44 (forward)
+>Barcode-44-(forward)
 GAGTGGGAAGGAACCCTTTCTACT
->Barcode 45 (forward)
+>Barcode-45-(forward)
 CACTGAAGGCATCTCTGTTGGATC
->Barcode 46 (forward)
+>Barcode-46-(forward)
 CAGGAGAATGAAGTGGAACACAGC
->Barcode 47 (forward)
+>Barcode-47-(forward)
 GAACTACCTGTGGGAAAGTTGCAC
->Barcode 48 (forward)
+>Barcode-48-(forward)
 TACAGGTGTACCACGTTCCAGATG
->Barcode 49 (forward)
+>Barcode-49-(forward)
 CTAGATGTTCAAAGCTGCACCAGT
->Barcode 50 (forward)
+>Barcode-50-(forward)
 ACGCAGGAAGTTACCAAAGTCCAT
->Barcode 51 (forward)
+>Barcode-51-(forward)
 GAGGACCCAGTAGGCTCATTCAAC
->Barcode 52 (forward)
+>Barcode-52-(forward)
 GTCCACGAACAATCTTGTCTCTCA
->Barcode 53 (forward)
+>Barcode-53-(forward)
 CTTTGCATGAGACGGTCTGAATCT
->Barcode 54 (forward)
+>Barcode-54-(forward)
 CATGCTCCTTAGTCAAAGCTCTTG
->Barcode 55 (forward)
+>Barcode-55-(forward)
 CGTAGATCAGGGTCTCATCTTCCA
->Barcode 56 (forward)
+>Barcode-56-(forward)
 TTCATGCCACCTGTTGAGTAGTGA
->Barcode 57 (forward)
+>Barcode-57-(forward)
 ACTTCCGAAGGAGATTGACCTAGC
->Barcode 58 (forward)
+>Barcode-58-(forward)
 TCAGACTCACGGAGGAGTAACCTG
->Barcode 59 (forward)
+>Barcode-59-(forward)
 ACCTTGCTTTCCCTTCTTGATTGA
->Barcode 60 (forward)
+>Barcode-60-(forward)
 CCATAGAAGCCTTGGTTGAACATG
->Barcode 61 (forward)
+>Barcode-61-(forward)
 GTGCTGAGGCACATAGTACCCTCT
->Barcode 62 (forward)
+>Barcode-62-(forward)
 TACGTCCTGAAGTAAGTGTGGGTG
->Barcode 63 (forward)
+>Barcode-63-(forward)
 GTTCAAGACCCAGGAACTTCAGAA
->Barcode 64 (forward)
+>Barcode-64-(forward)
 GAAAGTCGATGAACGGTGTCTGTC
->Barcode 65 (forward)
+>Barcode-65-(forward)
 CCTTGTCTGGAGGAAGACTGAGAA
->Barcode 66 (forward)
+>Barcode-66-(forward)
 GAAGTTAGAAGCCACAAGGATCGG
->Barcode 67 (forward)
+>Barcode-67-(forward)
 GGTGAGCACACGAGTATGACAAAC
->Barcode 68 (forward)
+>Barcode-68-(forward)
 CCACCTTCGTGTTTGCTTAGATTC
->Barcode 69 (forward)
+>Barcode-69-(forward)
 AGATCACATGAGGCTCGGACTGTA
->Barcode 70 (forward)
+>Barcode-70-(forward)
 ACACTCCATTCGTAGGATCTCGGT
->Barcode 71 (forward)
+>Barcode-71-(forward)
 CTGTTACTACCTGATGCTCCCAGG
->Barcode 72 (forward)
+>Barcode-72-(forward)
 GTCGGTATGGAAGACAGTCAGCTA
->Barcode 73 (forward)
+>Barcode-73-(forward)
 GAGGGTTCTGTCATCCTGTTTCTT
->Barcode 74 (forward)
+>Barcode-74-(forward)
 AGTGGAAGTGTTGGGATGCTTGTA
->Barcode 75 (forward)
+>Barcode-75-(forward)
 ACAACAGGGTTCATCACAATGGTC
->Barcode 76 (forward)
+>Barcode-76-(forward)
 GTCCAGGGTTGATGTAACAAGCAT
->Barcode 77 (forward)
+>Barcode-77-(forward)
 GTTGTATCCCTGAGAAACAGGTCG
->Barcode 78 (forward)
+>Barcode-78-(forward)
 TTCTGATTCAAAGGTTCGGTTGTT
->Barcode 79 (forward)
+>Barcode-79-(forward)
 CAGCAGTGAGAACTATCTCCGAGA
->Barcode 80 (forward)
+>Barcode-80-(forward)
 GAATCGCTATCCTATGTTCATCCG
->Barcode 81 (forward)
+>Barcode-81-(forward)
 CCGAAACAACTTCACAAGATGAGG
->Barcode 82 (forward)
+>Barcode-82-(forward)
 TAGTCCTGGAACTCGACATACCGT
->Barcode 83 (forward)
+>Barcode-83-(forward)
 TTCGACCTTACCTAGATCAAGCCA
->Barcode 84 (forward)
+>Barcode-84-(forward)
 TGGCACAGGTTCTAGGTCCACTAC
->Barcode 85 (forward)
+>Barcode-85-(forward)
 GATCATCCAACTAACTCCTCCGTT
->Barcode 86 (forward)
+>Barcode-86-(forward)
 TACTTACGCTTGTTGGGATCACCT
->Barcode 87 (forward)
+>Barcode-87-(forward)
 CCTCCCTAACAACAGGAGCATGTA
->Barcode 88 (forward)
+>Barcode-88-(forward)
 CTGCTTCGGATCGGTAGTAGAAGA
->Barcode 89 (forward)
+>Barcode-89-(forward)
 CAACTAGCCAAACATTGATGCTGT
->Barcode 90 (forward)
+>Barcode-90-(forward)
 GCCTCAAACCGTACCCTCTACATC
->Barcode 91 (forward)
+>Barcode-91-(forward)
 AGTAGCGTGAGTTCCTATGGAGCC
->Barcode 92 (forward)
+>Barcode-92-(forward)
 GGTCCTGTATCTTTCCACTCACAA
->Barcode 93 (forward)
+>Barcode-93-(forward)
 CCCAAGTCTGAAGTGATGGAAACT
->Barcode 94 (forward)
+>Barcode-94-(forward)
 GTAGGTGGCAGTTTGAGGACAATC
->Barcode 95 (forward)
+>Barcode-95-(forward)
 AAGTCCATTCTTCTTCCAGACAGG
->Barcode 96 (forward)
+>Barcode-96-(forward)
 ATGGTGGACTCTATGACCGTTCAG
